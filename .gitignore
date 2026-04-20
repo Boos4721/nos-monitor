@@ -1,0 +1,11 @@
+target/
+*.log
+
+# local binaries
+nos-monitor
+nospowcli_*
+
+# local runtime configs (may contain secrets)
+config.yaml
+monitor.yaml
+config/*.yaml
