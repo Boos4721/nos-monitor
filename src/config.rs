@@ -181,7 +181,7 @@ pub struct LogsConfig {
 }
 
 fn default_log_paths() -> Vec<PathBuf> {
-    vec![PathBuf::from("/root/nos/logs/miner-client.log")]
+    vec![PathBuf::from("./log/nos.log")]
 }
 
 impl Default for LogsConfig {

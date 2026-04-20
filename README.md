@@ -66,7 +66,7 @@ monitor:
 
   logs:
     paths:
-      - /root/nos/logs/miner-client.log
+      - ./log/nos.log
     start_position: end
 
   detect:
