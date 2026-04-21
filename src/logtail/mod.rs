@@ -1,13 +1,21 @@
 pub mod json_line;
 
-use crate::config::StartPosition;
-use crate::detect::InputEvent;
 use std::fs::{File, Metadata};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
+
+use crate::config::StartPosition;
+use crate::detect::InputEvent;
 use tokio::sync::mpsc;
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+
+type FileIdentity = u128;
 
 pub fn follow_file(
     path: PathBuf,
@@ -69,7 +77,7 @@ pub fn follow_file(
 fn open_reader(
     path: &PathBuf,
     start_position: StartPosition,
-) -> anyhow::Result<(BufReader<File>, u64, u64)> {
+) -> anyhow::Result<(BufReader<File>, FileIdentity, u64)> {
     let mut f = File::open(path)?;
     let meta = f.metadata()?;
     let file_id = file_identity(&meta);
@@ -87,11 +95,17 @@ fn open_reader(
     Ok((BufReader::new(f), file_id, pos))
 }
 
-fn file_identity(meta: &Metadata) -> u64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(meta.len())
+#[cfg(unix)]
+fn file_identity(meta: &Metadata) -> FileIdentity {
+    meta.ino() as FileIdentity
 }
 
+#[cfg(windows)]
+fn file_identity(meta: &Metadata) -> FileIdentity {
+    ((meta.file_index_high() as u128) << 64) | (meta.file_index_low() as u128)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity(meta: &Metadata) -> FileIdentity {
+    meta.len() as FileIdentity
+}
