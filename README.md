@@ -83,6 +83,7 @@ monitor:
 
   alert:
     bark_url: "https://api.day.app/替换你的key"
+    bark_group: "groupName"
     dry_run: false
     dedup_window_secs: 900
     cooldown_secs: 300

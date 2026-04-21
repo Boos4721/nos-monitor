@@ -33,7 +33,7 @@ impl WebhookClient {
     pub async fn send(&self, ev: &AlertEvent) -> anyhow::Result<()> {
         let mut attempt = 0u32;
         let mut delay_ms = self.cfg.retry_base_delay_ms;
-        let payload = bark_payload(ev);
+        let payload = bark_payload(ev, &self.cfg);
 
         loop {
             attempt += 1;
@@ -62,7 +62,7 @@ impl WebhookClient {
     }
 }
 
-fn bark_payload(ev: &AlertEvent) -> BarkPayload<'_> {
+fn bark_payload<'a>(ev: &'a AlertEvent, cfg: &'a AlertConfig) -> BarkPayload<'a> {
     let title = match ev.severity.as_str() {
         "critical" => "NOS 监控告警",
         "warning" => "NOS 监控提醒",
@@ -92,6 +92,12 @@ fn bark_payload(ev: &AlertEvent) -> BarkPayload<'_> {
         lines.push(format!("原始: {}", ev.raw));
     }
 
+    let group = cfg
+        .bark_group
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("nos-monitor");
+
     BarkPayload {
         title,
         body: lines.join("\n"),
@@ -100,6 +106,6 @@ fn bark_payload(ev: &AlertEvent) -> BarkPayload<'_> {
             "warning" => "active",
             _ => "passive",
         },
-        group: Some("nos-monitor"),
+        group: Some(group),
     }
 }

@@ -181,7 +181,7 @@ pub struct LogsConfig {
 }
 
 fn default_log_paths() -> Vec<PathBuf> {
-    vec![PathBuf::from("./log/nos.log")]
+    vec![PathBuf::from("/root/nos/logs/miner-client.log")]
 }
 
 impl Default for LogsConfig {
@@ -251,6 +251,8 @@ impl Default for DetectConfig {
 pub struct AlertConfig {
     #[serde(default = "default_bark_url", alias = "webhook_url")]
     pub bark_url: String,
+    #[serde(default, alias = "group")]
+    pub bark_group: Option<String>,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default = "default_retry_max")]
@@ -305,6 +307,7 @@ impl Default for AlertConfig {
     fn default() -> Self {
         Self {
             bark_url: default_bark_url(),
+            bark_group: None,
             timeout_ms: default_timeout_ms(),
             retry_max_attempts: default_retry_max(),
             retry_base_delay_ms: default_retry_base_delay_ms(),
