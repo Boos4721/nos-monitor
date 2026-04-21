@@ -2,12 +2,11 @@ pub mod json_line;
 
 use crate::config::StartPosition;
 use crate::detect::InputEvent;
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 pub fn follow_file(
@@ -19,7 +18,7 @@ pub fn follow_file(
 ) -> anyhow::Result<()> {
     loop {
         match open_reader(&path, start_position) {
-            Ok((mut reader, mut inode, mut last_pos)) => {
+            Ok((mut reader, mut file_id, mut last_pos)) => {
                 let mut buf = String::new();
                 loop {
                     buf.clear();
@@ -27,9 +26,9 @@ pub fn follow_file(
                         Ok(0) => {
                             thread::sleep(Duration::from_millis(200));
                             if let Ok(meta) = std::fs::metadata(&path) {
-                                let new_inode = meta.ino();
+                                let new_file_id = file_identity(&meta);
                                 let new_len = meta.len();
-                                if new_inode != inode || new_len < last_pos {
+                                if new_file_id != file_id || new_len < last_pos {
                                     break;
                                 }
                             }
@@ -56,9 +55,9 @@ pub fn follow_file(
                 }
 
                 if let Ok(meta) = std::fs::metadata(&path) {
-                    inode = meta.ino();
+                    file_id = file_identity(&meta);
                 }
-                let _ = inode;
+                let _ = file_id;
             }
             Err(_) => {
                 thread::sleep(Duration::from_secs(1));
@@ -67,10 +66,13 @@ pub fn follow_file(
     }
 }
 
-fn open_reader(path: &PathBuf, start_position: StartPosition) -> anyhow::Result<(BufReader<File>, u64, u64)> {
+fn open_reader(
+    path: &PathBuf,
+    start_position: StartPosition,
+) -> anyhow::Result<(BufReader<File>, u64, u64)> {
     let mut f = File::open(path)?;
     let meta = f.metadata()?;
-    let inode = meta.ino();
+    let file_id = file_identity(&meta);
 
     match start_position {
         StartPosition::End => {
@@ -82,5 +84,14 @@ fn open_reader(path: &PathBuf, start_position: StartPosition) -> anyhow::Result<
     }
 
     let pos = f.stream_position().unwrap_or(0);
-    Ok((BufReader::new(f), inode, pos))
+    Ok((BufReader::new(f), file_id, pos))
 }
+
+fn file_identity(meta: &Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(meta.len())
+}
+
