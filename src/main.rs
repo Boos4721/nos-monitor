@@ -16,25 +16,32 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-struct FileLogWriter {
+struct TeeWriter {
     file: Arc<Mutex<std::fs::File>>,
 }
 
-impl Write for FileLogWriter {
+impl Write for TeeWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "log file mutex poisoned"))?;
-        file.write(buf)
+        {
+            let mut file = self
+                .file
+                .lock()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "log file mutex poisoned"))?;
+            file.write_all(buf)?;
+        }
+        io::stdout().write_all(buf)?;
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "log file mutex poisoned"))?;
-        file.flush()
+        {
+            let mut file = self
+                .file
+                .lock()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "log file mutex poisoned"))?;
+            file.flush()?;
+        }
+        io::stdout().flush()
     }
 }
 
@@ -53,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .with_writer(move || FileLogWriter {
+        .with_writer(move || TeeWriter {
             file: Arc::clone(&shared_log_file),
         })
         .init();
