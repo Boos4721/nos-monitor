@@ -88,6 +88,14 @@ monitor:
     dedup_window_secs: 900
     cooldown_secs: 300
 
+  verify:
+    enabled: true
+    confirmations: 2
+    backtrack_blocks: 2
+    forward_blocks: 12
+    pending_ttl_secs: 1800
+    poll_interval_secs: 15
+
   liveness:
     interval_secs: 15
     timeout_ms: 1500
@@ -107,7 +115,19 @@ monitor:
         user: "boos"
         password: "boos."
         restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
+      - name: "miner-2"
+        host: "192.168.100.9"
+        port: 22
+        user: "boos"
+        password: "boos."
+        restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
 ```
+
+## 爆块链上核验通知
+
+- 打开 `monitor.verify.enabled: true` 后，程序会从日志提取 `workerID/height/nonce` 候选。
+- 当链上确认到对应区块/证据时，会发送 `candidate_verified` 通知。
+- 若在窗口时间内未确认，会发送 `candidate_unverified` 通知。
 
 ## 自动重启逻辑说明
 

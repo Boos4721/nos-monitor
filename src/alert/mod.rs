@@ -34,10 +34,11 @@ impl WebhookClient {
         let mut attempt = 0u32;
         let mut delay_ms = self.cfg.retry_base_delay_ms;
         let payload = bark_payload(ev, &self.cfg);
+        let request_url = bark_request_url(&self.url, &self.cfg);
 
         loop {
             attempt += 1;
-            let res = self.client.post(&self.url).json(&payload).send().await;
+            let res = self.client.post(&request_url).json(&payload).send().await;
 
             match res {
                 Ok(resp) if resp.status().is_success() => return Ok(()),
@@ -63,10 +64,15 @@ impl WebhookClient {
 }
 
 fn bark_payload<'a>(ev: &'a AlertEvent, cfg: &'a AlertConfig) -> BarkPayload<'a> {
-    let title = match ev.severity.as_str() {
-        "critical" => "NOS 监控告警",
-        "warning" => "NOS 监控提醒",
-        _ => "NOS 监控恢复",
+    let title = match ev.event_type.as_str() {
+        "candidate_detected" => "【爆块候选】NOS 监控",
+        "candidate_verified" => "【链上确认】NOS 监控",
+        "candidate_unverified" => "【待复核】NOS 监控",
+        _ => match ev.severity.as_str() {
+            "critical" => "NOS 监控告警",
+            "warning" => "NOS 监控提醒",
+            _ => "NOS 监控恢复",
+        },
     };
 
     let mut lines = Vec::new();
@@ -92,11 +98,7 @@ fn bark_payload<'a>(ev: &'a AlertEvent, cfg: &'a AlertConfig) -> BarkPayload<'a>
         lines.push(format!("原始: {}", ev.raw));
     }
 
-    let group = cfg
-        .bark_group
-        .as_deref()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or("nos-monitor");
+    let group = bark_group(cfg);
 
     BarkPayload {
         title,
@@ -108,4 +110,21 @@ fn bark_payload<'a>(ev: &'a AlertEvent, cfg: &'a AlertConfig) -> BarkPayload<'a>
         },
         group: Some(group),
     }
+}
+
+fn bark_group(cfg: &AlertConfig) -> &str {
+    cfg.bark_group
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("nos-monitor")
+}
+
+fn bark_request_url(url: &str, cfg: &AlertConfig) -> String {
+    let group = bark_group(cfg);
+    if url.contains("group=") {
+        return url.to_string();
+    }
+
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}group={group}")
 }
