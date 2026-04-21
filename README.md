@@ -49,13 +49,13 @@ cargo build --release
 ### 同时指定基础配置（可选）
 
 ```bash
-./target/release/nos-monitor -c monitor.yaml -f /root/nos/config.yaml
+./target/release/nos-monitor -c monitor.yaml -f ./config.yaml
 ```
 
 参数说明：
 
 - `-c, --config`：监控配置文件（`monitor.yaml`）
-- `-f, --base-config`：基础配置（默认尝试 `/root/nos/config.yaml`）
+- `-f, --base-config`：基础配置（默认尝试 `$PWD/config.yaml`）
 
 ## monitor.yaml 示例
 

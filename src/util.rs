@@ -23,11 +23,8 @@ pub struct BlockHeader {
 pub struct RpcBlock {
     pub number: String,
     pub hash: Option<String>,
-    #[serde(rename = "parentHash")]
-    pub parent_hash: Option<String>,
     pub nonce: Option<String>,
     pub miner: Option<String>,
-    pub timestamp: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

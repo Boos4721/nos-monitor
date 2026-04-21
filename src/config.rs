@@ -35,7 +35,7 @@ impl CliArgs {
 fn print_help_and_exit() -> ! {
     eprintln!(
         "Usage: nos-monitor [-c|--config <monitor.yaml>] [-f|--base-config <config.yaml>]\n\n\
-         If --base-config is not provided, defaults to /root/nos/config.yaml when present.\n"
+         If --base-config is not provided, defaults to $PWD/config.yaml when present.\n"
     );
     std::process::exit(2)
 }

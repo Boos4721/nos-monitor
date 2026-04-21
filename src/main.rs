@@ -11,7 +11,6 @@ mod util;
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -66,10 +65,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = config::CliArgs::from_env();
-    let base_config_path = args
-        .base_config
-        .clone()
-        .or_else(|| Some(PathBuf::from("/root/nos/config.yaml")));
+    let base_config_path = args.base_config.clone().or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join("config.yaml"))
+    });
 
     let (cfg, cfg_sources) = config::load_configs(args.config.clone(), base_config_path).await?;
     info!(
