@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let (tx, mut rx) = mpsc::channel::<detect::InputEvent>(1024);
+    let (candidate_tx, candidate_rx) = mpsc::channel::<rpc::PendingCandidate>(256);
 
     {
         let tx = tx.clone();
@@ -109,6 +110,20 @@ async fn main() -> anyhow::Result<()> {
                 error!(error = ?e, "rpc loop exited");
             }
         });
+    }
+
+    if cfg.verify.enabled {
+        let tx = tx.clone();
+        let rpc_cfg = cfg.rpc.clone();
+        let verify_cfg = cfg.verify.clone();
+        tokio::spawn(async move {
+            if let Err(e) = rpc::run_verification_loop(rpc_cfg, verify_cfg, candidate_rx, tx).await
+            {
+                error!(error = ?e, "verification loop exited");
+            }
+        });
+    } else {
+        drop(candidate_rx);
     }
 
     if cfg.ssh.hosts.is_empty() {
@@ -161,7 +176,9 @@ async fn main() -> anyhow::Result<()> {
                 let client_id = host_cfg.client_id.clone();
                 let host_name = host_cfg.name.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = liveness::run_liveness_loop(addr, client_id, source, live_cfg, tx).await {
+                    if let Err(e) =
+                        liveness::run_liveness_loop(addr, client_id, source, live_cfg, tx).await
+                    {
                         error!(error = ?e, host = %host_name, "remote node liveness loop exited");
                     }
                 });
@@ -211,6 +228,25 @@ async fn main() -> anyhow::Result<()> {
             }
             maybe_ev = rx.recv() => {
                 let Some(ev) = maybe_ev else { break; };
+
+                if cfg.verify.enabled {
+                    if let detect::InputEvent::LogLine { path, line, node_addr, client_id } = &ev {
+                        if let Some(candidate) = detect::parse_mining_candidate(line) {
+                            let pending = rpc::PendingCandidate {
+                                candidate,
+                                source_path: Some(path.to_string_lossy().to_string()),
+                                node_addr: node_addr.clone(),
+                                client_id: client_id.clone().or_else(|| cfg.node.client_id.clone()),
+                                first_seen_at: std::time::Instant::now(),
+                                attempts: 0,
+                            };
+                            if candidate_tx.send(pending).await.is_err() {
+                                warn!("candidate verification channel closed");
+                            }
+                        }
+                    }
+                }
+
                 let Some(alert_ev) = detect::detect_event(&cfg, ev) else { continue; };
                 if !deduper.should_send(&alert_ev.rule_id, &alert_ev.fingerprint_key) {
                     continue;

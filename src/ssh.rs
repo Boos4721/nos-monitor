@@ -42,7 +42,14 @@ pub async fn run_ssh_loop(
                 if !emit_screen_events(&host_cfg, &snapshot.screens, &mut state, &tx).await {
                     return Ok(());
                 }
-                if !emit_process_events(&host_cfg, &snapshot.process_hits, &mut state, timeout_secs, &tx).await
+                if !emit_process_events(
+                    &host_cfg,
+                    &snapshot.process_hits,
+                    &mut state,
+                    timeout_secs,
+                    &tx,
+                )
+                .await
                 {
                     return Ok(());
                 }
@@ -243,7 +250,8 @@ async fn maybe_restart_miner(
     let now = Instant::now();
 
     if let Some(last_at) = state.last_restart_at.get(cooldown_key) {
-        if let Some(remaining_secs) = restart_cooldown_remaining_secs(*last_at, now, cooldown_secs) {
+        if let Some(remaining_secs) = restart_cooldown_remaining_secs(*last_at, now, cooldown_secs)
+        {
             return try_send(
                 tx,
                 InputEvent::ProcessRestartSkippedCooldown {
@@ -450,15 +458,21 @@ async fn fetch_remote_snapshot(
     for path in &host_cfg.log_paths {
         let escaped = shell_escape(path.to_string_lossy().as_ref());
         script.push_str(&format!("echo '{}_LOG:{}'\n", marker, path.display()));
-        script.push_str(&format!("tail -n {} {} 2>/dev/null || true\n", tail_lines, escaped));
+        script.push_str(&format!(
+            "tail -n {} {} 2>/dev/null || true\n",
+            tail_lines, escaped
+        ));
     }
 
     let mut cmd = build_ssh_command(host_cfg, timeout_secs);
     cmd.arg("sh").arg("-lc").arg(script);
 
-    let output = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs + 2), cmd.output())
-        .await
-        .context("ssh command timed out")??;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs + 2),
+        cmd.output(),
+    )
+    .await
+    .context("ssh command timed out")??;
 
     if !output.status.success() {
         let stderr = truncate_for_error(String::from_utf8_lossy(&output.stderr).trim());
@@ -572,9 +586,12 @@ async fn run_remote_command(
     let mut cmd = build_ssh_command(host_cfg, timeout_secs);
     cmd.arg("sh").arg("-lc").arg(command);
 
-    let output = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs + 2), cmd.output())
-        .await
-        .context("restart command timed out")??;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs + 2),
+        cmd.output(),
+    )
+    .await
+    .context("restart command timed out")??;
 
     if !output.status.success() {
         let stdout = truncate_for_error(String::from_utf8_lossy(&output.stdout).trim());
@@ -598,7 +615,11 @@ fn should_attempt_restart(missing_count: u32, threshold: u32) -> bool {
     missing_count >= threshold
 }
 
-fn restart_cooldown_remaining_secs(last_at: Instant, now: Instant, cooldown_secs: u64) -> Option<u64> {
+fn restart_cooldown_remaining_secs(
+    last_at: Instant,
+    now: Instant,
+    cooldown_secs: u64,
+) -> Option<u64> {
     if now.duration_since(last_at) >= Duration::from_secs(cooldown_secs) {
         return None;
     }
@@ -620,7 +641,8 @@ fn truncate_for_error(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_log_timestamp, restart_cooldown_remaining_secs, should_attempt_restart, stale_duration_secs,
+        extract_log_timestamp, restart_cooldown_remaining_secs, should_attempt_restart,
+        stale_duration_secs,
     };
     use chrono::{Duration as ChronoDuration, Utc};
     use std::time::{Duration, Instant};

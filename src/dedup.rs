@@ -39,7 +39,8 @@ impl Deduper {
 
     fn cleanup(&mut self, now: Instant) {
         let window = self.window;
-        self.last_sent.retain(|_, t| now.duration_since(*t) <= window);
+        self.last_sent
+            .retain(|_, t| now.duration_since(*t) <= window);
     }
 }
 

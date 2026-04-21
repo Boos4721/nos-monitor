@@ -4,6 +4,38 @@ use chrono::Utc;
 use serde::Serialize;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
+pub struct MiningCandidate {
+    pub worker_id: u64,
+    pub height: u64,
+    pub nonce: String,
+    pub raw: String,
+    pub combined: String,
+    pub log_timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MiningVerificationResult {
+    pub candidate: MiningCandidate,
+    pub matched_contract: String,
+    pub tx_hash: Option<String>,
+    pub matched_block: u64,
+    pub confidence: String,
+    pub evidence: String,
+    pub source_path: Option<String>,
+    pub node_addr: Option<String>,
+    pub client_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MiningVerificationFailure {
+    pub candidate: MiningCandidate,
+    pub reason: String,
+    pub source_path: Option<String>,
+    pub node_addr: Option<String>,
+    pub client_id: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum InputEvent {
     LogLine {
@@ -12,6 +44,8 @@ pub enum InputEvent {
         node_addr: Option<String>,
         client_id: Option<String>,
     },
+    MiningCandidateVerified(MiningVerificationResult),
+    MiningCandidateUnverified(MiningVerificationFailure),
     NodeDown {
         addr: String,
         error: String,
@@ -126,6 +160,12 @@ pub struct AlertEvent {
     pub fingerprint_key: String,
 }
 
+pub fn parse_mining_candidate(raw: &str) -> Option<MiningCandidate> {
+    let parsed = parse_line(raw);
+    let (_, log_timestamp, combined) = split_line_parts(&parsed);
+    parse_candidate_from_combined(raw, combined, log_timestamp)
+}
+
 pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
     match ev {
         InputEvent::LogLine {
@@ -134,6 +174,60 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             node_addr,
             client_id,
         } => detect_log(cfg, path, line, node_addr, client_id),
+        InputEvent::MiningCandidateVerified(result) => Some(AlertEvent {
+            event_type: "candidate_verified".to_string(),
+            rule_id: "candidate_verified".to_string(),
+            severity: "info".to_string(),
+            node_addr: result.node_addr,
+            client_id: result.client_id.or_else(|| cfg.node.client_id.clone()),
+            source_path: result.source_path,
+            timestamp: now_rfc3339(),
+            log_timestamp: result.candidate.log_timestamp,
+            summary: format!(
+                "爆块候选已链上确认: height={}, workerID={}, nonce={}, contract={}, block={}, confidence={}",
+                result.candidate.height,
+                result.candidate.worker_id,
+                result.candidate.nonce,
+                result.matched_contract,
+                result.matched_block,
+                result.confidence
+            ),
+            matched: result.tx_hash,
+            raw: truncate(
+                format!(
+                    "evidence={} | combined={} | raw={}",
+                    result.evidence, result.candidate.combined, result.candidate.raw
+                ),
+                cfg.alert.max_raw_bytes,
+            ),
+            fingerprint_key: format!(
+                "candidate_verified|{}|{}|{}",
+                result.candidate.height, result.candidate.worker_id, result.candidate.nonce
+            ),
+        }),
+        InputEvent::MiningCandidateUnverified(result) => Some(AlertEvent {
+            event_type: "candidate_unverified".to_string(),
+            rule_id: "candidate_unverified".to_string(),
+            severity: "warning".to_string(),
+            node_addr: result.node_addr,
+            client_id: result.client_id.or_else(|| cfg.node.client_id.clone()),
+            source_path: result.source_path,
+            timestamp: now_rfc3339(),
+            log_timestamp: result.candidate.log_timestamp,
+            summary: format!(
+                "爆块候选未确认: height={}, workerID={}, nonce={} ({})",
+                result.candidate.height, result.candidate.worker_id, result.candidate.nonce, result.reason
+            ),
+            matched: None,
+            raw: truncate(
+                format!("combined={} | raw={}", result.candidate.combined, result.candidate.raw),
+                cfg.alert.max_raw_bytes,
+            ),
+            fingerprint_key: format!(
+                "candidate_unverified|{}|{}|{}",
+                result.candidate.height, result.candidate.worker_id, result.candidate.nonce
+            ),
+        }),
         InputEvent::NodeDown {
             addr,
             error,
@@ -467,30 +561,38 @@ fn detect_log(
     client_id: Option<String>,
 ) -> Option<AlertEvent> {
     let parsed = parse_line(&raw);
-
-    let (level, log_ts, combined) = match &parsed {
-        ParsedLine::Json(j) => {
-            let lvl = j.level.clone().unwrap_or_default();
-            let ts = j.timestamp.clone();
-            let mut parts: Vec<String> = Vec::new();
-            if let Some(m) = &j.msg {
-                parts.push(m.clone());
-            }
-            if let Some(e) = &j.error {
-                parts.push(e.clone());
-            }
-            if let Some(s) = &j.stacktrace {
-                parts.push(s.clone());
-            }
-            (lvl, ts, parts.join(" | "))
-        }
-        ParsedLine::Text(t) => (String::new(), None, t.clone()),
-    };
+    let (level, log_ts, combined) = split_line_parts(&parsed);
 
     for pat in &cfg.detect.suppress_patterns {
         if !pat.is_empty() && combined.contains(pat) {
             return None;
         }
+    }
+
+    if let Some(candidate) = parse_candidate_from_combined(&raw, combined.clone(), log_ts.clone()) {
+        return Some(AlertEvent {
+            event_type: "candidate_detected".to_string(),
+            rule_id: "candidate_detected".to_string(),
+            severity: "info".to_string(),
+            node_addr: node_addr.or_else(|| cfg.node.server_addr.clone()),
+            client_id: client_id.or_else(|| cfg.node.client_id.clone()),
+            source_path: Some(path.to_string_lossy().to_string()),
+            timestamp: now_rfc3339(),
+            log_timestamp: log_ts,
+            summary: format!(
+                "发现爆块候选: height={}, workerID={}, nonce={}",
+                candidate.height, candidate.worker_id, candidate.nonce
+            ),
+            matched: Some(format!(
+                "height={}, workerID={}, nonce={}",
+                candidate.height, candidate.worker_id, candidate.nonce
+            )),
+            raw: truncate(raw, cfg.alert.max_raw_bytes),
+            fingerprint_key: format!(
+                "candidate_detected|{}|{}|{}",
+                candidate.height, candidate.worker_id, candidate.nonce
+            ),
+        });
     }
 
     if let Some(matched) = find_match(&combined, &cfg.detect.block_fail_keywords) {
@@ -538,6 +640,106 @@ fn detect_log(
     None
 }
 
+fn split_line_parts(parsed: &ParsedLine) -> (String, Option<String>, String) {
+    match parsed {
+        ParsedLine::Json(j) => {
+            let lvl = j.level.clone().unwrap_or_default();
+            let ts = j.timestamp.clone();
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(m) = &j.msg {
+                parts.push(m.clone());
+            }
+            if let Some(e) = &j.error {
+                parts.push(e.clone());
+            }
+            if let Some(s) = &j.stacktrace {
+                parts.push(s.clone());
+            }
+            (lvl, ts, parts.join(" | "))
+        }
+        ParsedLine::Text(t) => (String::new(), None, t.clone()),
+    }
+}
+
+fn parse_candidate_from_combined(
+    raw: &str,
+    combined: String,
+    log_timestamp: Option<String>,
+) -> Option<MiningCandidate> {
+    if !contains_candidate_markers(&combined) {
+        return None;
+    }
+
+    let worker_id = extract_numeric_field(&combined, &["workerid", "worker_id"])?;
+    let height = extract_numeric_field(&combined, &["height"])?;
+    let nonce = extract_string_field(&combined, &["nonce"])?;
+
+    Some(MiningCandidate {
+        worker_id,
+        height,
+        nonce,
+        raw: raw.to_string(),
+        combined,
+        log_timestamp,
+    })
+}
+
+fn contains_candidate_markers(input: &str) -> bool {
+    let input_lc = input.to_ascii_lowercase();
+    (input_lc.contains("valid nonce")
+        || input.contains("有效Nonce")
+        || input.contains("有效 nonce"))
+        && input_lc.contains("worker")
+        && input_lc.contains("height")
+        && input_lc.contains("nonce")
+}
+
+fn extract_numeric_field(input: &str, keys: &[&str]) -> Option<u64> {
+    extract_string_field(input, keys)?.parse().ok()
+}
+
+fn extract_string_field(input: &str, keys: &[&str]) -> Option<String> {
+    let input_lc = input.to_ascii_lowercase();
+    for key in keys {
+        let key_lc = key.to_ascii_lowercase();
+        let mut search_from = 0usize;
+        while let Some(relative_idx) = input_lc[search_from..].find(&key_lc) {
+            let idx = search_from + relative_idx;
+            let after_key = &input[idx + key.len()..];
+            if let Some(value) = trim_field_value(after_key) {
+                return Some(value);
+            }
+            search_from = idx + key.len();
+        }
+    }
+    None
+}
+
+fn trim_field_value(remainder: &str) -> Option<String> {
+    let start = remainder
+        .char_indices()
+        .find(|(_, ch)| !matches!(ch, ' ' | '\t' | '"' | '\\'))
+        .map(|(idx, _)| idx)?;
+    let tail = &remainder[start..];
+    let tail = tail.strip_prefix(':').or_else(|| tail.strip_prefix('='))?;
+    let value_start = tail
+        .char_indices()
+        .find(|(_, ch)| !matches!(ch, ' ' | '\t' | '"' | '\\'))
+        .map(|(idx, _)| idx)?;
+    let value_tail = &tail[value_start..];
+    let end = value_tail
+        .char_indices()
+        .find(|(_, ch)| matches!(ch, ',' | '}' | ' ' | '|' | '"'))
+        .map(|(idx, _)| idx)
+        .unwrap_or(value_tail.len());
+    let value = value_tail[..end].trim().trim_matches('"');
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
 fn find_match<'a>(haystack: &'a str, needles: &'a [String]) -> Option<&'a String> {
     let haystack_lc = haystack.to_ascii_lowercase();
     needles
@@ -567,4 +769,36 @@ fn combined_fingerprint(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_mining_candidate;
+
+    #[test]
+    fn parses_candidate_from_plain_text_log() {
+        let raw = r#"找到有效Nonce\",\"workerID\":13, \"height\":70203821,\"nonce\":10422410401645896667"#;
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 13);
+        assert_eq!(parsed.height, 70203821);
+        assert_eq!(parsed.nonce, "10422410401645896667");
+    }
+
+    #[test]
+    fn parses_candidate_from_json_log_message() {
+        let raw = r#"{"timestamp":"2026-04-21T00:00:00Z","msg":"found valid nonce workerID=9, height=88, nonce=12345"}"#;
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 9);
+        assert_eq!(parsed.height, 88);
+        assert_eq!(parsed.nonce, "12345");
+        assert_eq!(
+            parsed.log_timestamp.as_deref(),
+            Some("2026-04-21T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn ignores_non_candidate_logs() {
+        assert!(parse_mining_candidate("submit failed height=88 nonce=123").is_none());
+    }
 }

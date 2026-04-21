@@ -25,7 +25,10 @@ impl CliArgs {
             }
         }
 
-        Self { config, base_config }
+        Self {
+            config,
+            base_config,
+        }
     }
 }
 
@@ -80,6 +83,8 @@ pub struct MonitorConfig {
     pub liveness: LivenessConfig,
     #[serde(default)]
     pub ssh: SshConfig,
+    #[serde(default)]
+    pub verify: VerifyConfig,
 }
 
 impl Default for MonitorConfig {
@@ -92,6 +97,7 @@ impl Default for MonitorConfig {
             alert: AlertConfig::default(),
             liveness: LivenessConfig::default(),
             ssh: SshConfig::default(),
+            verify: VerifyConfig::default(),
         }
     }
 }
@@ -120,8 +126,9 @@ pub struct RpcConfig {
 
 fn default_rpc_endpoints() -> Vec<String> {
     vec![
-        "https://rpc-mainnet.noschain.org".to_string(),
-        "https://rpc-mainnet2.noschain.org".to_string(),
+        "https://www.kortho-chain.com".to_string(),
+        "https://www.kortho-chain.cc".to_string(),
+        "https://www.kortho-chain.pro".to_string(),
         "https://rpc.noschain.org".to_string(),
     ]
 }
@@ -248,6 +255,75 @@ impl Default for DetectConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct VerifyConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_verify_confirmations")]
+    pub confirmations: u64,
+    #[serde(default = "default_verify_backtrack_blocks")]
+    pub backtrack_blocks: u64,
+    #[serde(default = "default_verify_forward_blocks")]
+    pub forward_blocks: u64,
+    #[serde(default = "default_verify_pending_ttl_secs")]
+    pub pending_ttl_secs: u64,
+    #[serde(default = "default_verify_poll_interval_secs")]
+    pub poll_interval_secs: u64,
+    #[serde(default = "default_primary_contracts")]
+    pub primary_contracts: Vec<String>,
+    #[serde(default = "default_auxiliary_contracts")]
+    pub auxiliary_contracts: Vec<String>,
+}
+
+fn default_verify_confirmations() -> u64 {
+    2
+}
+
+fn default_verify_backtrack_blocks() -> u64 {
+    2
+}
+
+fn default_verify_forward_blocks() -> u64 {
+    12
+}
+
+fn default_verify_pending_ttl_secs() -> u64 {
+    1800
+}
+
+fn default_verify_poll_interval_secs() -> u64 {
+    15
+}
+
+fn default_primary_contracts() -> Vec<String> {
+    vec![
+        "0x79cCCa31e6F352913A7EBeC89d3e416F0D543378".to_string(),
+        "0xbDe68c62E7De38C55d5675D6D2237a17cE285B3E".to_string(),
+    ]
+}
+
+fn default_auxiliary_contracts() -> Vec<String> {
+    vec![
+        "0x52Adcc498489C9994B806aE7BB75b28d760848aD".to_string(),
+        "0xf8d9f519255885a9d856ee1c6537ef01323cf970".to_string(),
+    ]
+}
+
+impl Default for VerifyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            confirmations: default_verify_confirmations(),
+            backtrack_blocks: default_verify_backtrack_blocks(),
+            forward_blocks: default_verify_forward_blocks(),
+            pending_ttl_secs: default_verify_pending_ttl_secs(),
+            poll_interval_secs: default_verify_poll_interval_secs(),
+            primary_contracts: default_primary_contracts(),
+            auxiliary_contracts: default_auxiliary_contracts(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AlertConfig {
     #[serde(default = "default_bark_url", alias = "webhook_url")]
     pub bark_url: String,
@@ -272,7 +348,7 @@ pub struct AlertConfig {
 }
 
 fn default_bark_url() -> String {
-    "https://api.day.app/7bhRqzhhT2wsM3pxrvgNKM".to_string()
+    String::new()
 }
 
 fn default_timeout_ms() -> u64 {
@@ -465,6 +541,10 @@ pub async fn load_configs(
 
     if mon_cfg.node.server_addr.is_none() {
         mon_cfg.node.server_addr = base_cfg.as_ref().and_then(|b| b.server_addr.clone());
+    }
+
+    if mon_cfg.alert.bark_url.trim().is_empty() {
+        mon_cfg.alert.bark_url = std::env::var("BARK_URL").unwrap_or_default();
     }
 
     for host in &mut mon_cfg.ssh.hosts {
