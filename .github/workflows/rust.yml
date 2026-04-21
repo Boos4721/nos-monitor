@@ -14,19 +14,23 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: linux-amd64
-            binary_ext: ""
+            binary_path: target/release/nos-monitor
+            build_target: ""
             run_tests: true
           - os: windows-latest
             artifact: windows-amd64
-            binary_ext: ".exe"
+            binary_path: target/release/nos-monitor.exe
+            build_target: ""
             run_tests: false
-          - os: macos-13
+          - os: macos-15
             artifact: macos-amd64
-            binary_ext: ""
+            binary_path: target/x86_64-apple-darwin/release/nos-monitor
+            build_target: x86_64-apple-darwin
             run_tests: false
-          - os: macos-14
+          - os: macos-15
             artifact: macos-arm64
-            binary_ext: ""
+            binary_path: target/aarch64-apple-darwin/release/nos-monitor
+            build_target: aarch64-apple-darwin
             run_tests: true
 
     runs-on: ${{ matrix.os }}
@@ -41,6 +45,10 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Add target
+        if: ${{ matrix.build_target != '' }}
+        run: rustup target add ${{ matrix.build_target }}
+
       - name: Check
         run: cargo check --all-targets
 
@@ -48,13 +56,17 @@ jobs:
         if: ${{ matrix.run_tests }}
         run: cargo test --all-targets --all-features
 
-      - name: Build release
+      - name: Build release (native)
+        if: ${{ matrix.build_target == '' }}
         run: cargo build --release
+
+      - name: Build release (target)
+        if: ${{ matrix.build_target != '' }}
+        run: cargo build --release --target ${{ matrix.build_target }}
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
           name: nos-monitor-${{ matrix.artifact }}
-          path: target/release/nos-monitor${{ matrix.binary_ext }}
+          path: ${{ matrix.binary_path }}
           if-no-files-found: error
-
