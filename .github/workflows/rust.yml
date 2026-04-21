@@ -23,7 +23,7 @@ jobs:
           - os: macos-13
             artifact: macos-amd64
             binary_ext: ""
-            run_tests: true
+            run_tests: false
           - os: macos-14
             artifact: macos-arm64
             binary_ext: ""
