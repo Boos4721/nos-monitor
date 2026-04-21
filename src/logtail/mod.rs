@@ -102,8 +102,7 @@ fn file_identity(meta: &Metadata) -> FileIdentity {
 
 #[cfg(windows)]
 fn file_identity(meta: &Metadata) -> FileIdentity {
-    ((meta.volume_serial_number().unwrap_or(0) as u128) << 64)
-        | (meta.file_index().unwrap_or(0) as u128)
+    meta.creation_time() as FileIdentity
 }
 
 #[cfg(not(any(unix, windows)))]
