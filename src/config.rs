@@ -151,17 +151,12 @@ impl Default for RpcConfig {
     }
 }
 
-#[derive(Debug, Copy, Clone, Deserialize)]
+#[derive(Debug, Copy, Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StartPosition {
+    #[default]
     End,
     Beginning,
-}
-
-impl Default for StartPosition {
-    fn default() -> Self {
-        StartPosition::End
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

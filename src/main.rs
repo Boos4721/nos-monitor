@@ -25,7 +25,7 @@ impl Write for TeeWriter {
             let mut file = self
                 .file
                 .lock()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "log file mutex poisoned"))?;
+                .map_err(|_| io::Error::other("log file mutex poisoned"))?;
             file.write_all(buf)?;
         }
         io::stdout().write_all(buf)?;
@@ -37,7 +37,7 @@ impl Write for TeeWriter {
             let mut file = self
                 .file
                 .lock()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "log file mutex poisoned"))?;
+                .map_err(|_| io::Error::other("log file mutex poisoned"))?;
             file.flush()?;
         }
         io::stdout().flush()

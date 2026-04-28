@@ -5,7 +5,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
@@ -224,7 +224,7 @@ async fn emit_process_events(
             return false;
         }
 
-        if should_attempt_restart(*missing_count, PROCESS_MISSING_THRESHOLD)
+        if *missing_count >= PROCESS_MISSING_THRESHOLD
             && !maybe_restart_miner(host_cfg, expected, expected, state, timeout_secs, tx).await
         {
             return false;
@@ -611,21 +611,17 @@ async fn try_send(tx: &mpsc::Sender<InputEvent>, event: InputEvent) -> bool {
     tx.send(event).await.is_ok()
 }
 
-fn should_attempt_restart(missing_count: u32, threshold: u32) -> bool {
-    missing_count >= threshold
-}
-
 fn restart_cooldown_remaining_secs(
     last_at: Instant,
     now: Instant,
     cooldown_secs: u64,
 ) -> Option<u64> {
-    if now.duration_since(last_at) >= Duration::from_secs(cooldown_secs) {
-        return None;
-    }
-
     let elapsed = now.duration_since(last_at).as_secs();
-    Some(cooldown_secs.saturating_sub(elapsed))
+    if elapsed >= cooldown_secs {
+        None
+    } else {
+        Some(cooldown_secs - elapsed)
+    }
 }
 
 fn truncate_for_error(s: &str) -> String {
@@ -641,19 +637,9 @@ fn truncate_for_error(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        extract_log_timestamp, restart_cooldown_remaining_secs, should_attempt_restart,
-        stale_duration_secs,
-    };
+    use super::{extract_log_timestamp, restart_cooldown_remaining_secs, stale_duration_secs};
     use chrono::{Duration as ChronoDuration, Utc};
     use std::time::{Duration, Instant};
-
-    #[test]
-    fn restart_requires_threshold() {
-        assert!(!should_attempt_restart(1, 2));
-        assert!(should_attempt_restart(2, 2));
-        assert!(should_attempt_restart(3, 2));
-    }
 
     #[test]
     fn cooldown_remaining_is_none_after_cooldown_elapsed() {

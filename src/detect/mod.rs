@@ -618,9 +618,7 @@ fn detect_log(
 
     let level_lc = level.to_ascii_lowercase();
     if level_lc == "fatal" || level_lc == "error" {
-        let Some(matched_ref) = find_match(&combined, &cfg.detect.secondary_keywords) else {
-            return None;
-        };
+        let matched_ref = find_match(&combined, &cfg.detect.secondary_keywords)?;
         return Some(AlertEvent {
             event_type: "mining_error".to_string(),
             rule_id: "mining_related_error".to_string(),

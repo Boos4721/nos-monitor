@@ -5,6 +5,13 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
+#[derive(Default)]
+struct LivenessState {
+    consecutive_failures: u32,
+    consecutive_successes: u32,
+    alerting: bool,
+}
+
 pub async fn run_liveness_loop(
     addr: String,
     client_id: Option<String>,
@@ -12,9 +19,7 @@ pub async fn run_liveness_loop(
     cfg: LivenessConfig,
     tx: mpsc::Sender<InputEvent>,
 ) -> anyhow::Result<()> {
-    let mut consecutive_failures = 0u32;
-    let mut consecutive_successes = 0u32;
-    let mut alerting = false;
+    let mut state = LivenessState::default();
 
     loop {
         let start = Instant::now();
@@ -27,12 +32,12 @@ pub async fn run_liveness_loop(
         match res {
             Ok(Ok(_stream)) => {
                 let latency_ms = start.elapsed().as_millis();
-                consecutive_failures = 0;
-                consecutive_successes += 1;
+                state.consecutive_failures = 0;
+                state.consecutive_successes += 1;
 
-                if !alerting {
-                    consecutive_successes = 0;
-                } else if consecutive_successes >= cfg.successes_before_recovery {
+                if !state.alerting {
+                    state.consecutive_successes = 0;
+                } else if state.consecutive_successes >= cfg.successes_before_recovery {
                     if tx
                         .send(InputEvent::NodeUp {
                             addr: addr.clone(),
@@ -45,8 +50,8 @@ pub async fn run_liveness_loop(
                     {
                         return Ok(());
                     }
-                    alerting = false;
-                    consecutive_successes = 0;
+                    state.alerting = false;
+                    state.consecutive_successes = 0;
                 }
             }
             Ok(Err(e)) => {
@@ -55,9 +60,7 @@ pub async fn run_liveness_loop(
                     &addr,
                     &client_id,
                     &source,
-                    &mut consecutive_successes,
-                    &mut consecutive_failures,
-                    &mut alerting,
+                    &mut state,
                     &cfg,
                     &tx,
                 )
@@ -72,9 +75,7 @@ pub async fn run_liveness_loop(
                     &addr,
                     &client_id,
                     &source,
-                    &mut consecutive_successes,
-                    &mut consecutive_failures,
-                    &mut alerting,
+                    &mut state,
                     &cfg,
                     &tx,
                 )
@@ -95,15 +96,13 @@ async fn handle_connect_failure(
     addr: &str,
     client_id: &Option<String>,
     source: &Option<String>,
-    consecutive_successes: &mut u32,
-    consecutive_failures: &mut u32,
-    alerting: &mut bool,
+    state: &mut LivenessState,
     cfg: &LivenessConfig,
     tx: &mpsc::Sender<InputEvent>,
 ) -> bool {
-    *consecutive_successes = 0;
-    *consecutive_failures += 1;
-    if !*alerting && *consecutive_failures >= cfg.failures_before_alert {
+    state.consecutive_successes = 0;
+    state.consecutive_failures += 1;
+    if !state.alerting && state.consecutive_failures >= cfg.failures_before_alert {
         if tx
             .send(InputEvent::NodeDown {
                 addr: addr.to_string(),
@@ -116,8 +115,8 @@ async fn handle_connect_failure(
         {
             return false;
         }
-        *alerting = true;
-        *consecutive_failures = 0;
+        state.alerting = true;
+        state.consecutive_failures = 0;
     }
     true
 }

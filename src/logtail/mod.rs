@@ -70,7 +70,7 @@ pub fn follow_file(
 }
 
 fn open_reader(
-    path: &PathBuf,
+    path: &std::path::Path,
     start_position: StartPosition,
 ) -> anyhow::Result<(BufReader<File>, FileIdentity, u64)> {
     let mut f = File::open(path)?;

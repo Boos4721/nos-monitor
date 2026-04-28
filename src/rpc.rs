@@ -147,6 +147,18 @@ pub struct PendingCandidate {
     pub attempts: u32,
 }
 
+impl PendingCandidate {
+    fn make_failure(&self, reason: String) -> MiningVerificationFailure {
+        MiningVerificationFailure {
+            candidate: self.candidate.clone(),
+            reason,
+            source_path: self.source_path.clone(),
+            node_addr: self.node_addr.clone(),
+            client_id: self.client_id.clone(),
+        }
+    }
+}
+
 pub async fn run_verification_loop(
     rpc_cfg: RpcConfig,
     verify_cfg: VerifyConfig,
@@ -182,13 +194,9 @@ pub async fn run_verification_loop(
                 let mut resolved = Vec::new();
                 for (key, item) in pending.iter_mut() {
                     if item.first_seen_at.elapsed() > Duration::from_secs(verify_cfg.pending_ttl_secs) {
-                        let _ = tx.send(InputEvent::MiningCandidateUnverified(MiningVerificationFailure {
-                            candidate: item.candidate.clone(),
-                            reason: "窗口内未发现链上证据".to_string(),
-                            source_path: item.source_path.clone(),
-                            node_addr: item.node_addr.clone(),
-                            client_id: item.client_id.clone(),
-                        })).await;
+                        let _ = tx.send(InputEvent::MiningCandidateUnverified(
+                            item.make_failure("窗口内未发现链上证据".to_string()),
+                        )).await;
                         resolved.push(key.clone());
                         continue;
                     }
@@ -206,13 +214,9 @@ pub async fn run_verification_loop(
                         Ok(None) => {}
                         Err(err) => {
                             if item.first_seen_at.elapsed() > Duration::from_secs(verify_cfg.pending_ttl_secs) {
-                                let _ = tx.send(InputEvent::MiningCandidateUnverified(MiningVerificationFailure {
-                                    candidate: item.candidate.clone(),
-                                    reason: format!("RPC 查询失败: {err:#}"),
-                                    source_path: item.source_path.clone(),
-                                    node_addr: item.node_addr.clone(),
-                                    client_id: item.client_id.clone(),
-                                })).await;
+                                let _ = tx.send(InputEvent::MiningCandidateUnverified(
+                                    item.make_failure(format!("RPC 查询失败: {err:#}")),
+                                )).await;
                                 resolved.push(key.clone());
                             }
                         }
