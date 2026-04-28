@@ -204,17 +204,17 @@ async fn main() -> anyhow::Result<()> {
     drop(tx);
 
     let mut deduper = dedup::Deduper::new(cfg.alert.dedup_window_secs, cfg.alert.cooldown_secs);
-    let webhook = if cfg.alert.bark_url.is_empty() {
+    let webhook = if cfg.alert.feishu_webhook_url.is_empty() {
         None
     } else {
         Some(alert::WebhookClient::new(
-            cfg.alert.bark_url.clone(),
+            cfg.alert.feishu_webhook_url.clone(),
             cfg.alert.clone(),
         )?)
     };
 
     if webhook.is_none() && !cfg.alert.dry_run {
-        warn!("alert.bark_url not set; running in print-only mode");
+        warn!("alert.feishu_webhook_url not set; running in print-only mode");
     }
 
     let shutdown = tokio::signal::ctrl_c();
@@ -259,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
 
                 if let Some(webhook) = webhook.as_ref() {
                     if let Err(e) = webhook.send(&alert_ev).await {
-                        error!(error = ?e, "failed to send bark notification");
+                        error!(error = ?e, "failed to send feishu notification");
                     } else {
                         info!(event_type = %alert_ev.event_type, rule_id = %alert_ev.rule_id, "notification sent");
                     }

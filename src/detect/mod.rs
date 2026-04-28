@@ -160,6 +160,10 @@ pub struct AlertEvent {
     pub fingerprint_key: String,
 }
 
+/// Reasonable block height bounds: 0 < height < 1 billion.
+/// This rejects obviously malformed values while allowing for chain growth.
+const MAX_BLOCK_HEIGHT: u64 = 1_000_000_000;
+
 pub fn parse_mining_candidate(raw: &str) -> Option<MiningCandidate> {
     let parsed = parse_line(raw);
     let (_, log_timestamp, combined) = split_line_parts(&parsed);
@@ -670,9 +674,19 @@ fn parse_candidate_from_combined(
         return None;
     }
 
-    let worker_id = extract_numeric_field(&combined, &["workerid", "worker_id"])?;
-    let height = extract_numeric_field(&combined, &["height"])?;
+    let worker_id = extract_numeric_field(&combined, &["workerid", "worker_id", "worker"])?;
+    let height = extract_numeric_field(&combined, &["height", "blockheight", "block_height"])?;
     let nonce = extract_string_field(&combined, &["nonce"])?;
+
+    // Validate block height is within a reasonable range.
+    if height == 0 || height > MAX_BLOCK_HEIGHT {
+        return None;
+    }
+
+    // Validate nonce is a plausible value (non-empty, all digits or hex).
+    if nonce.is_empty() || !is_valid_nonce(&nonce) {
+        return None;
+    }
 
     Some(MiningCandidate {
         worker_id,
@@ -684,14 +698,35 @@ fn parse_candidate_from_combined(
     })
 }
 
+/// Detect log lines that indicate a valid-nonce / mining-candidate event.
+///
+/// Handles both Chinese and English patterns across various log formats:
+///   - "找到有效Nonce" / "找到有效 Nonce"
+///   - "有效Nonce" / "有效 Nonce"
+///   - "valid nonce" / "found valid nonce"
+///   - "nonce is valid" / "nonce found"
+///   - "submit success" / "提交成功" (with height/worker context)
 fn contains_candidate_markers(input: &str) -> bool {
     let input_lc = input.to_ascii_lowercase();
-    (input_lc.contains("valid nonce")
+
+    // Primary: explicit valid-nonce markers (Chinese + English).
+    let has_valid_nonce = input_lc.contains("valid nonce")
         || input.contains("有效Nonce")
-        || input.contains("有效 nonce"))
-        && input_lc.contains("worker")
-        && input_lc.contains("height")
-        && input_lc.contains("nonce")
+        || input.contains("有效 Nonce")
+        || input.contains("找到有效")
+        || input_lc.contains("nonce is valid")
+        || input_lc.contains("nonce found");
+
+    // Secondary: successful submit markers when combined with mining context.
+    let has_submit_success = input_lc.contains("submit success")
+        || input.contains("提交成功")
+        || input.contains("出块成功")
+        || input.contains("爆块成功");
+
+    let has_mining_context = input_lc.contains("height")
+        && (input_lc.contains("worker") || input_lc.contains("nonce"));
+
+    (has_valid_nonce || has_submit_success) && has_mining_context
 }
 
 fn extract_numeric_field(input: &str, keys: &[&str]) -> Option<u64> {
@@ -705,9 +740,20 @@ fn extract_string_field(input: &str, keys: &[&str]) -> Option<String> {
         let mut search_from = 0usize;
         while let Some(relative_idx) = input_lc[search_from..].find(&key_lc) {
             let idx = search_from + relative_idx;
+            // Ensure this is not a substring of a longer word (e.g. "workerid"
+            // should not match when searching for "worker" in "workerid=").
+            // Only enforce boundary when searching for shorter keys like "worker".
+            let before_ok = idx == 0
+                || !input_lc
+                    .as_bytes()
+                    .get(idx - 1)
+                    .map(|b| b.is_ascii_alphanumeric())
+                    .unwrap_or(false);
             let after_key = &input[idx + key.len()..];
-            if let Some(value) = trim_field_value(after_key) {
-                return Some(value);
+            if before_ok {
+                if let Some(value) = trim_field_value(after_key) {
+                    return Some(value);
+                }
             }
             search_from = idx + key.len();
         }
@@ -716,20 +762,30 @@ fn extract_string_field(input: &str, keys: &[&str]) -> Option<String> {
 }
 
 fn trim_field_value(remainder: &str) -> Option<String> {
+    // Skip whitespace, quotes, backslashes between key and separator.
     let start = remainder
         .char_indices()
         .find(|(_, ch)| !matches!(ch, ' ' | '\t' | '"' | '\\'))
         .map(|(idx, _)| idx)?;
     let tail = &remainder[start..];
-    let tail = tail.strip_prefix(':').or_else(|| tail.strip_prefix('='))?;
+
+    // Accept separator:  :  =  ： (full-width colon)
+    let tail = tail
+        .strip_prefix(':')
+        .or_else(|| tail.strip_prefix('='))
+        .or_else(|| tail.strip_prefix('：'))?;
+
+    // Skip whitespace/quotes after separator.
     let value_start = tail
         .char_indices()
         .find(|(_, ch)| !matches!(ch, ' ' | '\t' | '"' | '\\'))
         .map(|(idx, _)| idx)?;
     let value_tail = &tail[value_start..];
+
+    // Value ends at comma, brace, space, pipe, quote, bracket, or full-width comma.
     let end = value_tail
         .char_indices()
-        .find(|(_, ch)| matches!(ch, ',' | '}' | ' ' | '|' | '"'))
+        .find(|(_, ch)| matches!(ch, ',' | '}' | ']' | ' ' | '\t' | '|' | '"' | '，'))
         .map(|(idx, _)| idx)
         .unwrap_or(value_tail.len());
     let value = value_tail[..end].trim().trim_matches('"');
@@ -738,6 +794,21 @@ fn trim_field_value(remainder: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+/// Validate that a nonce string looks plausible: digits only, or hex characters.
+fn is_valid_nonce(nonce: &str) -> bool {
+    if nonce.is_empty() {
+        return false;
+    }
+    // Pure decimal digits (most common).
+    if nonce.bytes().all(|b| b.is_ascii_digit()) {
+        return true;
+    }
+    // Hex string (with or without 0x prefix).
+    let hex_part = nonce.strip_prefix("0x").or_else(|| nonce.strip_prefix("0X"));
+    let hex = hex_part.unwrap_or(nonce);
+    !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn find_match<'a>(haystack: &'a str, needles: &'a [String]) -> Option<&'a String> {
@@ -800,5 +871,83 @@ mod tests {
     #[test]
     fn ignores_non_candidate_logs() {
         assert!(parse_mining_candidate("submit failed height=88 nonce=123").is_none());
+    }
+
+    #[test]
+    fn parses_chinese_valid_nonce_with_spaces() {
+        let raw = "找到有效 Nonce workerID=5, height=123456, nonce=9876543210";
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 5);
+        assert_eq!(parsed.height, 123456);
+        assert_eq!(parsed.nonce, "9876543210");
+    }
+
+    #[test]
+    fn parses_english_found_valid_nonce() {
+        let raw = "miner found valid nonce workerID=2, height=500000, nonce=abcdef0123456789";
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 2);
+        assert_eq!(parsed.height, 500000);
+        assert_eq!(parsed.nonce, "abcdef0123456789");
+    }
+
+    #[test]
+    fn parses_nonce_is_valid_pattern() {
+        let raw = "nonce is valid worker_id=7, height=100000, nonce=1122334455";
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 7);
+        assert_eq!(parsed.height, 100000);
+        assert_eq!(parsed.nonce, "1122334455");
+    }
+
+    #[test]
+    fn parses_submit_success_chinese() {
+        let raw = "提交成功 workerID=3, height=200000, nonce=5566778899";
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 3);
+        assert_eq!(parsed.height, 200000);
+        assert_eq!(parsed.nonce, "5566778899");
+    }
+
+    #[test]
+    fn parses_blockheight_key_variant() {
+        let raw = "found valid nonce workerID=1, blockHeight=999, nonce=123";
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.height, 999);
+    }
+
+    #[test]
+    fn rejects_zero_height() {
+        let raw = "found valid nonce workerID=1, height=0, nonce=123";
+        assert!(parse_mining_candidate(raw).is_none());
+    }
+
+    #[test]
+    fn rejects_extreme_height() {
+        let raw = "found valid nonce workerID=1, height=9999999999, nonce=123";
+        assert!(parse_mining_candidate(raw).is_none());
+    }
+
+    #[test]
+    fn rejects_empty_nonce() {
+        let raw = "found valid nonce workerID=1, height=100, nonce=";
+        assert!(parse_mining_candidate(raw).is_none());
+    }
+
+    #[test]
+    fn parses_full_width_colon_separator() {
+        let raw = "找到有效Nonce workerID：4, height：50000, nonce：9988776655";
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 4);
+        assert_eq!(parsed.height, 50000);
+        assert_eq!(parsed.nonce, "9988776655");
+    }
+
+    #[test]
+    fn parses_json_with_escaped_quotes() {
+        let raw = r#"{"msg":"找到有效Nonce\",\"workerID\":8, \"height\":600000,\"nonce\":123456789012345"}"#;
+        let parsed = parse_mining_candidate(raw).expect("candidate should parse");
+        assert_eq!(parsed.worker_id, 8);
+        assert_eq!(parsed.height, 600000);
     }
 }

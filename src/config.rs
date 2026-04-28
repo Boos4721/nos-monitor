@@ -325,10 +325,8 @@ impl Default for VerifyConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AlertConfig {
-    #[serde(default = "default_bark_url", alias = "webhook_url")]
-    pub bark_url: String,
-    #[serde(default, alias = "group")]
-    pub bark_group: Option<String>,
+    #[serde(default = "default_feishu_webhook_url", alias = "webhook_url", alias = "bark_url")]
+    pub feishu_webhook_url: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default = "default_retry_max")]
@@ -347,7 +345,7 @@ pub struct AlertConfig {
     pub max_raw_bytes: usize,
 }
 
-fn default_bark_url() -> String {
+fn default_feishu_webhook_url() -> String {
     String::new()
 }
 
@@ -382,8 +380,7 @@ fn default_max_raw() -> usize {
 impl Default for AlertConfig {
     fn default() -> Self {
         Self {
-            bark_url: default_bark_url(),
-            bark_group: None,
+            feishu_webhook_url: default_feishu_webhook_url(),
             timeout_ms: default_timeout_ms(),
             retry_max_attempts: default_retry_max(),
             retry_base_delay_ms: default_retry_base_delay_ms(),
@@ -543,8 +540,10 @@ pub async fn load_configs(
         mon_cfg.node.server_addr = base_cfg.as_ref().and_then(|b| b.server_addr.clone());
     }
 
-    if mon_cfg.alert.bark_url.trim().is_empty() {
-        mon_cfg.alert.bark_url = std::env::var("BARK_URL").unwrap_or_default();
+    if mon_cfg.alert.feishu_webhook_url.trim().is_empty() {
+        mon_cfg.alert.feishu_webhook_url = std::env::var("FEISHU_WEBHOOK_URL")
+            .or_else(|_| std::env::var("BARK_URL"))
+            .unwrap_or_default();
     }
 
     for host in &mut mon_cfg.ssh.hosts {
