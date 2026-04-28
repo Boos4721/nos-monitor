@@ -26,7 +26,7 @@ pub fn follow_file(
 ) -> anyhow::Result<()> {
     loop {
         match open_reader(&path, start_position) {
-            Ok((mut reader, mut file_id, mut last_pos)) => {
+            Ok((mut reader, file_id, mut last_pos)) => {
                 let mut buf = String::new();
                 loop {
                     buf.clear();
@@ -61,11 +61,6 @@ pub fn follow_file(
                         }
                     }
                 }
-
-                if let Ok(meta) = std::fs::metadata(&path) {
-                    file_id = file_identity(&meta);
-                }
-                let _ = file_id;
             }
             Err(_) => {
                 thread::sleep(Duration::from_secs(1));

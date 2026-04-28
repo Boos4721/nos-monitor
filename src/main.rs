@@ -248,7 +248,7 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 let Some(alert_ev) = detect::detect_event(&cfg, ev) else { continue; };
-                if !deduper.should_send(&alert_ev.rule_id, &alert_ev.fingerprint_key) {
+                if !deduper.should_send(&alert_ev.fingerprint_key) {
                     continue;
                 }
 

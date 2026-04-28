@@ -617,10 +617,10 @@ fn detect_log(
     }
 
     let level_lc = level.to_ascii_lowercase();
-    if (level_lc == "fatal" || level_lc == "error")
-        && find_match(&combined, &cfg.detect.secondary_keywords).is_some()
-    {
-        let matched = find_match(&combined, &cfg.detect.secondary_keywords).cloned();
+    if level_lc == "fatal" || level_lc == "error" {
+        let Some(matched_ref) = find_match(&combined, &cfg.detect.secondary_keywords) else {
+            return None;
+        };
         return Some(AlertEvent {
             event_type: "mining_error".to_string(),
             rule_id: "mining_related_error".to_string(),
@@ -631,7 +631,7 @@ fn detect_log(
             timestamp: now_rfc3339(),
             log_timestamp: log_ts,
             summary: "命中挖矿相关 error/fatal 日志".to_string(),
-            matched,
+            matched: Some(matched_ref.clone()),
             raw: truncate(raw, cfg.alert.max_raw_bytes),
             fingerprint_key: format!(
                 "mining_related_error|{}|{}",
@@ -723,8 +723,8 @@ fn contains_candidate_markers(input: &str) -> bool {
         || input.contains("出块成功")
         || input.contains("爆块成功");
 
-    let has_mining_context = input_lc.contains("height")
-        && (input_lc.contains("worker") || input_lc.contains("nonce"));
+    let has_mining_context =
+        input_lc.contains("height") && (input_lc.contains("worker") || input_lc.contains("nonce"));
 
     (has_valid_nonce || has_submit_success) && has_mining_context
 }
@@ -806,7 +806,9 @@ fn is_valid_nonce(nonce: &str) -> bool {
         return true;
     }
     // Hex string (with or without 0x prefix).
-    let hex_part = nonce.strip_prefix("0x").or_else(|| nonce.strip_prefix("0X"));
+    let hex_part = nonce
+        .strip_prefix("0x")
+        .or_else(|| nonce.strip_prefix("0X"));
     let hex = hex_part.unwrap_or(nonce);
     !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }

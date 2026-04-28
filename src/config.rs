@@ -67,7 +67,7 @@ impl BaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct MonitorConfig {
     #[serde(default)]
     pub node: NodeConfig,
@@ -85,21 +85,6 @@ pub struct MonitorConfig {
     pub ssh: SshConfig,
     #[serde(default)]
     pub verify: VerifyConfig,
-}
-
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        Self {
-            node: NodeConfig::default(),
-            rpc: RpcConfig::default(),
-            logs: LogsConfig::default(),
-            detect: DetectConfig::default(),
-            alert: AlertConfig::default(),
-            liveness: LivenessConfig::default(),
-            ssh: SshConfig::default(),
-            verify: VerifyConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -325,7 +310,11 @@ impl Default for VerifyConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AlertConfig {
-    #[serde(default = "default_feishu_webhook_url", alias = "webhook_url", alias = "bark_url")]
+    #[serde(
+        default = "default_feishu_webhook_url",
+        alias = "webhook_url",
+        alias = "bark_url"
+    )]
     pub feishu_webhook_url: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,

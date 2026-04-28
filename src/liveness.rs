@@ -50,47 +50,74 @@ pub async fn run_liveness_loop(
                 }
             }
             Ok(Err(e)) => {
-                consecutive_successes = 0;
-                consecutive_failures += 1;
-                if !alerting && consecutive_failures >= cfg.failures_before_alert {
-                    if tx
-                        .send(InputEvent::NodeDown {
-                            addr: addr.clone(),
-                            error: e.to_string(),
-                            client_id: client_id.clone(),
-                            source: source.clone(),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                    alerting = true;
-                    consecutive_failures = 0;
+                if !handle_connect_failure(
+                    &e.to_string(),
+                    &addr,
+                    &client_id,
+                    &source,
+                    &mut consecutive_successes,
+                    &mut consecutive_failures,
+                    &mut alerting,
+                    &cfg,
+                    &tx,
+                )
+                .await
+                {
+                    return Ok(());
                 }
             }
             Err(_) => {
-                consecutive_successes = 0;
-                consecutive_failures += 1;
-                if !alerting && consecutive_failures >= cfg.failures_before_alert {
-                    if tx
-                        .send(InputEvent::NodeDown {
-                            addr: addr.clone(),
-                            error: "connect timeout".to_string(),
-                            client_id: client_id.clone(),
-                            source: source.clone(),
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                    alerting = true;
-                    consecutive_failures = 0;
+                if !handle_connect_failure(
+                    "connect timeout",
+                    &addr,
+                    &client_id,
+                    &source,
+                    &mut consecutive_successes,
+                    &mut consecutive_failures,
+                    &mut alerting,
+                    &cfg,
+                    &tx,
+                )
+                .await
+                {
+                    return Ok(());
                 }
             }
         }
 
         tokio::time::sleep(Duration::from_secs(cfg.interval_secs)).await;
     }
+}
+
+/// Returns `false` if the channel is closed and the caller should exit.
+async fn handle_connect_failure(
+    error: &str,
+    addr: &str,
+    client_id: &Option<String>,
+    source: &Option<String>,
+    consecutive_successes: &mut u32,
+    consecutive_failures: &mut u32,
+    alerting: &mut bool,
+    cfg: &LivenessConfig,
+    tx: &mpsc::Sender<InputEvent>,
+) -> bool {
+    *consecutive_successes = 0;
+    *consecutive_failures += 1;
+    if !*alerting && *consecutive_failures >= cfg.failures_before_alert {
+        if tx
+            .send(InputEvent::NodeDown {
+                addr: addr.to_string(),
+                error: error.to_string(),
+                client_id: client_id.clone(),
+                source: source.clone(),
+            })
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        *alerting = true;
+        *consecutive_failures = 0;
+    }
+    true
 }

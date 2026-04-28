@@ -4,8 +4,8 @@ use crate::detect::{
     InputEvent, MiningCandidate, MiningVerificationFailure, MiningVerificationResult,
 };
 use crate::util::{
-    duration_since_block, encode_decimal_string_as_hex32, encode_u64_as_hex32,
-    parse_block_timestamp_secs, parse_hex_u64, BlockHeader, RpcBlock, RpcEnvelope, RpcLog,
+    duration_since_block, encode_decimal_string_as_hex32, encode_u64_as_hex32, parse_hex_u64,
+    BlockHeader, RpcBlock, RpcEnvelope, RpcLog,
 };
 use anyhow::Context;
 use chrono::Utc;
@@ -468,8 +468,7 @@ async fn fetch_latest_block(client: &Client, endpoint: &str) -> anyhow::Result<(
         json!(["latest", false]),
     )
     .await?;
-    let block_ts_secs =
-        parse_block_timestamp_secs(&block.timestamp).context("invalid block timestamp hex")?;
+    let block_ts_secs = parse_hex_u64(&block.timestamp).context("invalid block timestamp hex")?;
 
     Ok((height, block_ts_secs, start.elapsed().as_millis()))
 }

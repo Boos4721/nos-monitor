@@ -630,11 +630,12 @@ fn restart_cooldown_remaining_secs(
 
 fn truncate_for_error(s: &str) -> String {
     const MAX: usize = 256;
-    if s.chars().count() <= MAX {
-        s.to_string()
+    let mut chars = s.chars();
+    let prefix: String = chars.by_ref().take(MAX).collect();
+    if chars.next().is_some() {
+        format!("{prefix}...")
     } else {
-        let shortened: String = s.chars().take(MAX).collect();
-        format!("{shortened}...")
+        prefix
     }
 }
 

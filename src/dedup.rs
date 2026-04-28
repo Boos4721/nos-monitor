@@ -18,7 +18,7 @@ impl Deduper {
         }
     }
 
-    pub fn should_send(&mut self, _rule_id: &str, fingerprint_key: &str) -> bool {
+    pub fn should_send(&mut self, fingerprint_key: &str) -> bool {
         let now = Instant::now();
 
         if let Some(prev) = self.last_sent.get(fingerprint_key) {
@@ -53,22 +53,22 @@ mod tests {
     #[test]
     fn blocks_repeated_fingerprint_within_cooldown() {
         let mut deduper = Deduper::new(60, 1);
-        assert!(deduper.should_send("rule", "a"));
-        assert!(!deduper.should_send("rule", "a"));
+        assert!(deduper.should_send("a"));
+        assert!(!deduper.should_send("a"));
     }
 
     #[test]
     fn allows_repeated_fingerprint_after_cooldown() {
         let mut deduper = Deduper::new(60, 1);
-        assert!(deduper.should_send("rule", "a"));
+        assert!(deduper.should_send("a"));
         thread::sleep(Duration::from_millis(1100));
-        assert!(deduper.should_send("rule", "a"));
+        assert!(deduper.should_send("a"));
     }
 
     #[test]
     fn different_fingerprints_do_not_block_each_other() {
         let mut deduper = Deduper::new(60, 5);
-        assert!(deduper.should_send("rule", "a"));
-        assert!(deduper.should_send("rule", "b"));
+        assert!(deduper.should_send("a"));
+        assert!(deduper.should_send("b"));
     }
 }
