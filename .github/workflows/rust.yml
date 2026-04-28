@@ -17,21 +17,29 @@ jobs:
             binary_path: target/release/nos-monitor
             build_target: ""
             run_tests: true
+            run_clippy: true
+            run_fmt: true
           - os: windows-latest
             artifact: windows-amd64
             binary_path: target/release/nos-monitor.exe
             build_target: ""
             run_tests: false
+            run_clippy: false
+            run_fmt: false
           - os: macos-15
             artifact: macos-amd64
             binary_path: target/x86_64-apple-darwin/release/nos-monitor
             build_target: x86_64-apple-darwin
             run_tests: false
+            run_clippy: false
+            run_fmt: false
           - os: macos-15
             artifact: macos-arm64
             binary_path: target/aarch64-apple-darwin/release/nos-monitor
             build_target: aarch64-apple-darwin
             run_tests: true
+            run_clippy: false
+            run_fmt: false
 
     runs-on: ${{ matrix.os }}
 
@@ -41,6 +49,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ${{ matrix.run_clippy && 'clippy,rustfmt' || '' }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -55,6 +65,14 @@ jobs:
       - name: Test
         if: ${{ matrix.run_tests }}
         run: cargo test --all-targets --all-features
+
+      - name: Rustfmt
+        if: ${{ matrix.run_fmt }}
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        if: ${{ matrix.run_clippy }}
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build release (native)
         if: ${{ matrix.build_target == '' }}

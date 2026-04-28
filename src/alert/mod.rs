@@ -138,3 +138,70 @@ fn feishu_payload(ev: &AlertEvent) -> FeishuCard {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_event(event_type: &str, severity: &str) -> AlertEvent {
+        AlertEvent {
+            event_type: event_type.to_string(),
+            rule_id: "rule-1".to_string(),
+            severity: severity.to_string(),
+            node_addr: Some("127.0.0.1:1234".to_string()),
+            client_id: Some("client-7".to_string()),
+            source_path: Some("/tmp/miner.log".to_string()),
+            timestamp: "2026-04-29T05:05:00Z".to_string(),
+            log_timestamp: Some("2026-04-29T05:04:59Z".to_string()),
+            summary: "node state changed".to_string(),
+            matched: Some("matched phrase".to_string()),
+            raw: "raw line contents".to_string(),
+            fingerprint_key: "fingerprint".to_string(),
+        }
+    }
+
+    #[test]
+    fn candidate_verified_uses_green_confirmation_card() {
+        let payload = feishu_payload(&sample_event("candidate_verified", "info"));
+
+        assert_eq!(payload.msg_type, "interactive");
+        assert_eq!(payload.card.header.title.content, "【链上确认】NOS 监控");
+        assert_eq!(payload.card.header.template, "green");
+        let content = &payload.card.elements[0].text.content;
+        assert!(content.contains("**类型:** candidate_verified"));
+        assert!(content.contains("**节点:** 127.0.0.1:1234"));
+        assert!(content.contains("**client_id:** client-7"));
+        assert!(content.contains("**命中:** matched phrase"));
+        assert!(content.contains("**原始:** raw line contents"));
+    }
+
+    #[test]
+    fn severity_fallback_maps_warning_to_orange() {
+        let payload = feishu_payload(&sample_event("custom_event", "warning"));
+
+        assert_eq!(payload.card.header.title.content, "NOS 监控提醒");
+        assert_eq!(payload.card.header.template, "orange");
+    }
+
+    #[test]
+    fn omits_optional_lines_when_fields_are_empty() {
+        let mut event = sample_event("node_up", "info");
+        event.node_addr = None;
+        event.client_id = None;
+        event.source_path = None;
+        event.log_timestamp = None;
+        event.matched = None;
+        event.raw.clear();
+
+        let payload = feishu_payload(&event);
+        let content = &payload.card.elements[0].text.content;
+
+        assert!(!content.contains("**节点:**"));
+        assert!(!content.contains("**client_id:**"));
+        assert!(!content.contains("**来源:**"));
+        assert!(!content.contains("**日志时间:**"));
+        assert!(!content.contains("**命中:**"));
+        assert!(!content.contains("**原始:**"));
+        assert!(content.contains("**摘要:** node state changed"));
+    }
+}

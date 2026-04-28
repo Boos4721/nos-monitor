@@ -576,3 +576,131 @@ fn load_monitor_yaml(path: &Path) -> anyhow::Result<MonitorConfig> {
         Ok(serde_yaml::from_value::<MonitorConfig>(val)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: Tests are short-lived and this helper restores the original value on drop.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(value) => {
+                    // SAFETY: Restores the exact prior process environment value captured by the guard.
+                    unsafe { std::env::set_var(self.key, value) };
+                }
+                None => {
+                    // SAFETY: Restores the absence of the env var captured by the guard.
+                    unsafe { std::env::remove_var(self.key) };
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn load_nos_base_config_supports_nested_config_shape() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            "config:\n  server_addr: 1.2.3.4:5678\n  client_id: miner-01\n  metrics_port: 9200\n",
+        )
+        .unwrap();
+
+        let cfg = load_nos_base_config(&path).unwrap();
+        assert_eq!(cfg.server_addr.as_deref(), Some("1.2.3.4:5678"));
+        assert_eq!(cfg.client_id.as_deref(), Some("miner-01"));
+        assert_eq!(cfg.metrics_port, Some(9200));
+    }
+
+    #[test]
+    fn load_nos_base_config_falls_back_to_flat_shape() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            "server_addr: 127.0.0.1:7000\nclient_id: flat-client\nlog_level: debug\n",
+        )
+        .unwrap();
+
+        let cfg = load_nos_base_config(&path).unwrap();
+        assert_eq!(cfg.server_addr.as_deref(), Some("127.0.0.1:7000"));
+        assert_eq!(cfg.client_id.as_deref(), Some("flat-client"));
+        assert_eq!(cfg.log_level.as_deref(), Some("debug"));
+    }
+
+    #[tokio::test]
+    async fn load_configs_applies_base_env_and_ssh_defaults() {
+        let dir = tempdir().unwrap();
+        let base_path = dir.path().join("config.yaml");
+        let monitor_path = dir.path().join("monitor.yaml");
+
+        fs::write(
+            &base_path,
+            "config:\n  server_addr: 10.0.0.1:1234\n  client_id: base-client\n",
+        )
+        .unwrap();
+        fs::write(
+            &monitor_path,
+            "monitor:\n  ssh:\n    restart_cooldown_secs: 77\n    hosts:\n      - name: worker-a\n        host: 192.168.1.10\n",
+        )
+        .unwrap();
+
+        let guard = EnvVarGuard::set("FEISHU_WEBHOOK_URL", "https://example.invalid/webhook");
+
+        let (cfg, sources) = load_configs(Some(monitor_path.clone()), Some(base_path.clone()))
+            .await
+            .unwrap();
+
+        drop(guard);
+
+        assert_eq!(sources.monitor_config, Some(monitor_path));
+        assert_eq!(sources.base_config, Some(base_path));
+        assert_eq!(cfg.node.server_addr.as_deref(), Some("10.0.0.1:1234"));
+        assert_eq!(
+            cfg.alert.feishu_webhook_url,
+            "https://example.invalid/webhook"
+        );
+        assert_eq!(cfg.ssh.hosts.len(), 1);
+        let host = &cfg.ssh.hosts[0];
+        assert_eq!(host.node_addr.as_deref(), Some("10.0.0.1:1234"));
+        assert_eq!(host.restart_cooldown_secs, Some(77));
+        assert_eq!(host.client_id, None);
+        assert_eq!(host.log_paths, fixed_remote_log_paths());
+        assert_eq!(host.screen_names, fixed_screen_names());
+        assert_eq!(host.process_keywords, fixed_process_keywords());
+    }
+
+    #[test]
+    fn load_monitor_yaml_supports_nested_monitor_key() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("monitor.yaml");
+        fs::write(
+            &path,
+            "monitor:\n  liveness:\n    failures_before_alert: 5\n  alert:\n    webhook_url: https://example.invalid/alias\n",
+        )
+        .unwrap();
+
+        let cfg = load_monitor_yaml(&path).unwrap();
+        assert_eq!(cfg.liveness.failures_before_alert, 5);
+        assert_eq!(
+            cfg.alert.feishu_webhook_url,
+            "https://example.invalid/alias"
+        );
+    }
+}
