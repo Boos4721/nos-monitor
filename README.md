@@ -223,7 +223,36 @@ sudo systemctl stop nos-monitor@root
 - 模板使用了较保守的 hardening：`ProtectSystem=full`、`ProtectHome=true`、`PrivateTmp=true`。如果你的实际部署依赖 home 目录下的日志、二进制或额外文件，需要相应放宽。
 - `Restart=on-failure` 只会在异常退出时自动拉起；正常停止不会自动重启。
 
-## monitor.yaml 示例
+## SSH 最常用写法（推荐）
+
+如果你的机器大多是“同一批账号密码 + 同一重启命令 + 少数单机覆盖”，推荐直接按这个思路写：
+
+```yaml
+monitor:
+  ssh:
+    defaults:
+      user: "boos"
+      password: "boos."
+      restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
+      restart_cooldown_secs: 300
+
+    ranges:
+      - ips: "192.168.100.100-102"
+      - ips: "192.168.101.10-11"
+        user: "special-user"
+        restart_command: "systemctl restart nos"
+
+    hosts:
+      - host: "192.168.100.9"
+        name: "miner-1"
+```
+
+这也是当前最省事的写法：
+- 统一配置放 `defaults`
+- 成批机器放 `ranges`
+- 个别特殊机器放 `hosts`
+
+## monitor.yaml 完整示例
 
 ```yaml
 monitor:
@@ -279,15 +308,13 @@ monitor:
       restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
       restart_cooldown_secs: 300
     ranges:
-      - name_prefix: "miner-batch-a"
-        ips: "192.168.100.100-102"
+      - ips: "192.168.100.100-102"
       - ips: "192.168.101.10-11"
         user: "special-user"
         restart_command: "systemctl restart nos"
     hosts:
-      - name: "miner-1"
-        host: "192.168.100.9"
-        restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
+      - host: "192.168.100.9"
+        name: "miner-1"
 ```
 
 ## SSH 共享默认值与 IP 范围展开
@@ -328,14 +355,13 @@ monitor:
       restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
       restart_cooldown_secs: 300
     ranges:
-      - name_prefix: "rack-a"
-        ips: "192.168.100.100-105"
+      - ips: "192.168.100.100-105"
       - ips: "192.168.101.10-12"
         user: "special-user"
         restart_command: "systemctl restart nos"
     hosts:
-      - name: "special-box"
-        host: "192.168.200.9"
+      - host: "192.168.200.9"
+        name: "special-box"
         user: "root"
 ```
 
