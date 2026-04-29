@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+
+name="nos-monitor"
+description="nos-monitor service"
+command="/opt/nos-monitor/nos-monitor"
+command_args="-c /etc/nos-monitor/monitor.yaml -f /etc/nos-monitor/config.yaml"
+command_user="root:root"
+directory="/opt/nos-monitor"
+pidfile="/run/${RC_SVCNAME}.pid"
+command_background="yes"
+output_log="/opt/nos-monitor/log/stdout.log"
+error_log="/opt/nos-monitor/log/stderr.log"
+
+supervisor=supervise-daemon
+
+command_pre() {
+    checkpath -d -m 0755 /opt/nos-monitor/log
+}
+
+depend() {
+    need net
+}

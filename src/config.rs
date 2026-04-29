@@ -501,7 +501,10 @@ pub struct RemoteHostConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RemoteHostRangeConfig {
     pub name_prefix: Option<String>,
+    pub ips: Option<String>,
+    #[serde(default)]
     pub start: String,
+    #[serde(default)]
     pub end: String,
     #[serde(default = "default_ssh_port")]
     pub port: u16,
@@ -649,14 +652,13 @@ fn expand_ssh_host_ranges(
 }
 
 fn expand_ssh_host_range(range: &RemoteHostRangeConfig) -> anyhow::Result<Vec<RemoteHostConfig>> {
-    let start = parse_ipv4_addr(&range.start)?;
-    let end = parse_ipv4_addr(&range.end)?;
+    let (start, end) = resolve_range_bounds(range)?;
 
     anyhow::ensure!(
         start <= end,
         "ssh range start must be <= end: {} > {}",
-        range.start,
-        range.end
+        format_ipv4_addr(start),
+        format_ipv4_addr(end)
     );
 
     let prefix = normalize_optional_string(range.name_prefix.clone())
@@ -683,6 +685,46 @@ fn expand_ssh_host_range(range: &RemoteHostRangeConfig) -> anyhow::Result<Vec<Re
     }
 
     Ok(hosts)
+}
+
+fn resolve_range_bounds(range: &RemoteHostRangeConfig) -> anyhow::Result<(u32, u32)> {
+    if let Some(ips) = normalize_optional_string(range.ips.clone()) {
+        return parse_ipv4_range_expr(&ips);
+    }
+
+    anyhow::ensure!(
+        !range.start.trim().is_empty() && !range.end.trim().is_empty(),
+        "ssh range requires either ips or both start/end"
+    );
+
+    Ok((parse_ipv4_addr(&range.start)?, parse_ipv4_addr(&range.end)?))
+}
+
+fn parse_ipv4_range_expr(value: &str) -> anyhow::Result<(u32, u32)> {
+    let (start_raw, end_raw) = value
+        .split_once('-')
+        .ok_or_else(|| anyhow::anyhow!("invalid ssh ips range: {value}"))?;
+
+    let start_raw = start_raw.trim();
+    let end_raw = end_raw.trim();
+    let start = parse_ipv4_addr(start_raw)?;
+
+    let end = if end_raw.contains('.') {
+        parse_ipv4_addr(end_raw)?
+    } else {
+        let octet = end_raw
+            .parse::<u8>()
+            .map_err(|_| anyhow::anyhow!("invalid ssh ips range end octet: {value}"))?;
+        let start_octets = std::net::Ipv4Addr::from(start).octets();
+        u32::from(std::net::Ipv4Addr::new(
+            start_octets[0],
+            start_octets[1],
+            start_octets[2],
+            octet,
+        ))
+    };
+
+    Ok((start, end))
 }
 
 fn parse_ipv4_addr(value: &str) -> anyhow::Result<u32> {
@@ -958,7 +1000,7 @@ mod tests {
 
         fs::write(
             &monitor_path,
-            "monitor:\n  node:\n    server_addr: 10.0.0.1:1234\n  ssh:\n    restart_cooldown_secs: 300\n    defaults:\n      user: shared-user\n      password: shared-pass\n      restart_command: \"shared-restart\"\n      restart_cooldown_secs: 222\n    ranges:\n      - name_prefix: rack-a\n        start: 192.168.10.20\n        end: 192.168.10.22\n      - start: 192.168.20.5\n        end: 192.168.20.6\n        user: range-user\n        restart_command: \"range-restart\"\n        restart_cooldown_secs: 444\n    hosts:\n      - name: worker-a\n        host: 192.168.30.10\n",
+            "monitor:\n  node:\n    server_addr: 10.0.0.1:1234\n  ssh:\n    restart_cooldown_secs: 300\n    defaults:\n      user: shared-user\n      password: shared-pass\n      restart_command: \"shared-restart\"\n      restart_cooldown_secs: 222\n    ranges:\n      - name_prefix: rack-a\n        ips: 192.168.10.20-22\n      - ips: 192.168.20.5-192.168.20.6\n        user: range-user\n        restart_command: \"range-restart\"\n        restart_cooldown_secs: 444\n    hosts:\n      - name: worker-a\n        host: 192.168.30.10\n",
         )
         .unwrap();
 
@@ -992,8 +1034,7 @@ mod tests {
     #[test]
     fn expand_ssh_host_range_rejects_descending_ranges() {
         let range = RemoteHostRangeConfig {
-            start: "192.168.1.10".to_string(),
-            end: "192.168.1.9".to_string(),
+            ips: Some("192.168.1.10-9".to_string()),
             ..Default::default()
         };
 
@@ -1002,10 +1043,23 @@ mod tests {
     }
 
     #[test]
+    fn expand_ssh_host_range_supports_start_end_fields() {
+        let range = RemoteHostRangeConfig {
+            start: "192.168.1.10".to_string(),
+            end: "192.168.1.11".to_string(),
+            ..Default::default()
+        };
+
+        let hosts = expand_ssh_host_range(&range).unwrap();
+        assert_eq!(hosts.len(), 2);
+        assert_eq!(hosts[0].host, "192.168.1.10");
+        assert_eq!(hosts[1].host, "192.168.1.11");
+    }
+
+    #[test]
     fn expand_ssh_host_range_supports_single_host_ranges() {
         let range = RemoteHostRangeConfig {
-            start: "192.168.5.9".to_string(),
-            end: "192.168.5.9".to_string(),
+            ips: Some("192.168.5.9-9".to_string()),
             ..Default::default()
         };
 
@@ -1018,8 +1072,7 @@ mod tests {
     #[test]
     fn expand_ssh_host_range_uses_stable_names_across_subnets() {
         let range = RemoteHostRangeConfig {
-            start: "192.168.5.254".to_string(),
-            end: "192.168.6.1".to_string(),
+            ips: Some("192.168.5.254-192.168.6.1".to_string()),
             ..Default::default()
         };
 
@@ -1034,8 +1087,7 @@ mod tests {
     #[test]
     fn expand_ssh_host_range_rejects_invalid_ipv4_addresses() {
         let range = RemoteHostRangeConfig {
-            start: "192.168.1.999".to_string(),
-            end: "192.168.2.1".to_string(),
+            ips: Some("192.168.1.999-192.168.2.1".to_string()),
             ..Default::default()
         };
 
