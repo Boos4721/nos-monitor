@@ -77,6 +77,12 @@ async fn main() -> anyhow::Result<()> {
         base_config = ?cfg_sources.base_config,
         client_id = ?cfg.node.client_id,
         ssh_hosts = cfg.ssh.hosts.len(),
+        ssh_password_hosts = cfg
+            .ssh
+            .hosts
+            .iter()
+            .filter(|host| host.uses_password_auth())
+            .count(),
         "loaded configuration"
     );
 

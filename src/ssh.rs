@@ -546,9 +546,10 @@ fn parse_remote_snapshot(
 }
 
 fn build_ssh_command(host_cfg: &RemoteHostConfig, timeout_secs: u64) -> Command {
-    let mut cmd = if let Some(password) = &host_cfg.password {
+    let mut cmd = if host_cfg.uses_password_auth() {
         let mut cmd = Command::new("sshpass");
-        cmd.arg("-p").arg(password).arg("ssh");
+        cmd.arg("-e").arg("ssh");
+        cmd.env("SSHPASS", host_cfg.password.as_deref().unwrap_or_default());
         cmd
     } else {
         Command::new("ssh")

@@ -57,6 +57,79 @@ cargo build --release
 - `-c, --config`：监控配置文件（`monitor.yaml`）
 - `-f, --base-config`：基础配置（默认尝试 `$PWD/config.yaml`）
 
+### 运行行为说明
+
+- 程序会在当前工作目录下创建 `log/nos.log`，并将 tracing 日志同时写入该文件和标准输出。
+- 若未传 `--base-config`，程序会尝试读取当前工作目录下的 `config.yaml`。
+- 因此无论手动运行还是交给 systemd 托管，`WorkingDirectory` 都应与配置和日志目录规划保持一致。
+
+## systemd 部署（Plan 3 第一阶段）
+
+仓库提供了一个保守的 unit 模板：`deploy/systemd/nos-monitor@.service`。
+
+该模板假定：
+
+- 可执行文件位于 `/opt/nos-monitor/nos-monitor`
+- 工作目录位于 `/opt/nos-monitor`
+- 监控配置位于 `/etc/nos-monitor/monitor.yaml`
+- 基础配置位于 `/etc/nos-monitor/config.yaml`
+- 服务运行用户通过实例名传入，例如 `nos-monitor@root.service`
+
+### 1. 安装二进制
+
+```bash
+cargo build --release
+sudo install -d /opt/nos-monitor
+sudo install -m 0755 target/release/nos-monitor /opt/nos-monitor/nos-monitor
+```
+
+### 2. 准备配置
+
+```bash
+sudo install -d /etc/nos-monitor
+sudo cp monitor.yaml /etc/nos-monitor/monitor.yaml
+sudo cp config.yaml /etc/nos-monitor/config.yaml
+```
+
+如果你没有单独的基础配置文件，也可以按当前 CLI 行为调整 unit，把 `-f /etc/nos-monitor/config.yaml` 去掉。
+
+### 3. 安装 unit
+
+```bash
+sudo install -D -m 0644 deploy/systemd/nos-monitor@.service /etc/systemd/system/nos-monitor@.service
+sudo systemctl daemon-reload
+```
+
+### 4. 启动服务
+
+以 `root` 用户运行示例：
+
+```bash
+sudo systemctl enable --now nos-monitor@root
+```
+
+若希望以其他用户运行：
+
+- 先确保该用户对 `/opt/nos-monitor` 和 `/etc/nos-monitor/*.yaml` 具有读取权限
+- 确保 `/opt/nos-monitor/log` 可写
+- 再启动对应实例，例如 `sudo systemctl enable --now nos-monitor@miner`
+
+### 5. 常用运维命令
+
+```bash
+sudo systemctl status nos-monitor@root
+sudo journalctl -u nos-monitor@root -f
+sudo systemctl restart nos-monitor@root
+sudo systemctl stop nos-monitor@root
+```
+
+### 6. 注意事项
+
+- 当前程序没有原生 daemon/reload 配置热加载逻辑；修改 YAML 后通常需要 `systemctl restart`。
+- 由于程序会写入 `WorkingDirectory/log/nos.log`，如果修改 `WorkingDirectory`，请同步调整目录权限。
+- 模板使用了较保守的 hardening：`ProtectSystem=full`、`ProtectHome=true`、`PrivateTmp=true`。如果你的实际部署依赖 home 目录下的日志、二进制或额外文件，需要相应放宽。
+- `Restart=on-failure` 只会在异常退出时自动拉起；正常停止不会自动重启。
+
 ## monitor.yaml 示例
 
 ```yaml
@@ -107,20 +180,90 @@ monitor:
     tail_lines: 20
     restart_cooldown_secs: 300
     log_stale_threshold_secs: 120
+    defaults:
+      user: "boos"
+      password: "boos."
+      restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
+      restart_cooldown_secs: 300
+    ranges:
+      - name_prefix: "miner-batch-a"
+        start: "192.168.100.100"
+        end: "192.168.100.102"
+      - start: "192.168.101.10"
+        end: "192.168.101.11"
+        user: "special-user"
+        restart_command: "systemctl restart nos"
     hosts:
       - name: "miner-1"
-        host: "192.168.100.100"
-        port: 22
-        user: "boos"
-        password: "boos."
-        restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
-      - name: "miner-2"
         host: "192.168.100.9"
-        port: 22
-        user: "boos"
-        password: "boos."
         restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
 ```
+
+## SSH 共享默认值与 IP 范围展开
+
+当前 SSH 配置支持两层：
+
+- `monitor.ssh.defaults.*`：整组共享默认值
+- `monitor.ssh.ranges[]`：按 IPv4 起止地址批量展开主机
+- `monitor.ssh.hosts[]`：继续保留现有逐台配置方式
+
+范围项当前使用最小 schema：
+
+- `start`: 起始 IPv4
+- `end`: 结束 IPv4（包含）
+- `name_prefix`: 可选，展开后的名称格式为 `<name_prefix>-<最后一段IP>`
+- 也可在 range 上直接设置 `user` / `password` / `restart_command` / `restart_cooldown_secs` / `node_addr` / `port`
+
+优先级：
+
+- 单台 `hosts[]` 自身字段优先于共享默认值
+- `ranges[]` 会先展开成具体主机配置，然后与原有 `hosts[]` 一起走同一套后续默认值合并逻辑
+- range 自身字段优先于共享默认值
+- 若未设置 `name_prefix`：
+  - 同一 `/24` 内范围会默认生成类似 `192-168-100-101` 这样的主机名
+  - 跨 `/24` 范围会使用起始 IP 生成稳定前缀，例如从 `192.168.100.254` 到 `192.168.101.2` 会得到 `192-168-100-254-254`、`192-168-100-254-255`、`192-168-100-254-0`、`192-168-100-254-1`、`192-168-100-254-2`
+
+示例：
+
+```yaml
+monitor:
+  ssh:
+    defaults:
+      user: "boos"
+      password: "boos."
+      restart_command: "screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli_5.13"
+      restart_cooldown_secs: 300
+    ranges:
+      - name_prefix: "rack-a"
+        start: "192.168.100.100"
+        end: "192.168.100.105"
+      - start: "192.168.101.10"
+        end: "192.168.101.12"
+        user: "special-user"
+        restart_command: "systemctl restart nos"
+    hosts:
+      - name: "special-box"
+        host: "192.168.200.9"
+        user: "root"
+```
+
+推荐把共享 SSH 密码放到环境变量，而不是直接写进 YAML。
+
+- 也可通过环境变量覆盖共享凭据：
+  - `NOS_MONITOR_SSH_USER`
+  - `NOS_MONITOR_SSH_PASSWORD`
+- 若使用密码认证，程序通过 `SSHPASS` 环境变量传给 `sshpass`，避免把密码直接放进子进程参数列表
+- 空字符串或仅空白的凭据/重启命令会被视为未配置，避免误把空值当作有效配置
+
+示例：
+
+```bash
+export NOS_MONITOR_SSH_USER=boos
+export NOS_MONITOR_SSH_PASSWORD='***'
+./target/release/nos-monitor -c monitor.yaml
+```
+
+下一步再继续往你要的方向扩，就是：给一个 IP 范围，然后自动展开成多台主机，同时继续沿用这一套共享默认值。
 
 ## 飞书通知
 

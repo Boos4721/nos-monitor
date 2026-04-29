@@ -1,0 +1,23 @@
+[Unit]
+Description=nos-monitor service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/nos-monitor
+ExecStart=/opt/nos-monitor/nos-monitor -c /etc/nos-monitor/monitor.yaml -f /etc/nos-monitor/config.yaml
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Conservative hardening that should remain compatible with the current binary.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/nos-monitor/log
+
+[Install]
+WantedBy=multi-user.target

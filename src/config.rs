@@ -429,6 +429,10 @@ pub struct SshConfig {
     #[serde(default = "default_log_stale_threshold_secs")]
     pub log_stale_threshold_secs: u64,
     #[serde(default)]
+    pub defaults: SshHostDefaults,
+    #[serde(default)]
+    pub ranges: Vec<RemoteHostRangeConfig>,
+    #[serde(default)]
     pub hosts: Vec<RemoteHostConfig>,
 }
 
@@ -459,9 +463,19 @@ impl Default for SshConfig {
             tail_lines: default_ssh_tail_lines(),
             restart_cooldown_secs: default_restart_cooldown_secs(),
             log_stale_threshold_secs: default_log_stale_threshold_secs(),
+            defaults: SshHostDefaults::default(),
+            ranges: Vec::new(),
             hosts: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+pub struct SshHostDefaults {
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub restart_command: Option<String>,
+    pub restart_cooldown_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -482,6 +496,29 @@ pub struct RemoteHostConfig {
     pub restart_cooldown_secs: Option<u64>,
     pub node_addr: Option<String>,
     pub client_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RemoteHostRangeConfig {
+    pub name_prefix: Option<String>,
+    pub start: String,
+    pub end: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub restart_command: Option<String>,
+    pub restart_cooldown_secs: Option<u64>,
+    pub node_addr: Option<String>,
+}
+
+impl RemoteHostConfig {
+    pub fn uses_password_auth(&self) -> bool {
+        self.password
+            .as_ref()
+            .map(|password| !password.trim().is_empty())
+            .unwrap_or(false)
+    }
 }
 
 fn default_ssh_port() -> u16 {
@@ -530,17 +567,30 @@ pub async fn load_configs(
             .unwrap_or_default();
     }
 
+    let shared_ssh_defaults = resolve_shared_ssh_defaults(&mon_cfg.ssh.defaults);
+    let expanded_range_hosts = expand_ssh_host_ranges(&mon_cfg.ssh.ranges)?;
+    mon_cfg.ssh.hosts.extend(expanded_range_hosts);
+
     for host in &mut mon_cfg.ssh.hosts {
         host.log_paths = fixed_remote_log_paths();
         host.screen_names = fixed_screen_names();
         host.process_keywords = fixed_process_keywords();
         host.client_id = None;
 
+        host.user = first_non_empty(host.user.take(), shared_ssh_defaults.user.clone());
+        host.password = first_non_empty(host.password.take(), shared_ssh_defaults.password.clone());
+        host.restart_command = first_non_empty(
+            host.restart_command.take(),
+            shared_ssh_defaults.restart_command.clone(),
+        );
+
         if host.node_addr.is_none() {
             host.node_addr = mon_cfg.node.server_addr.clone();
         }
         if host.restart_cooldown_secs.is_none() {
-            host.restart_cooldown_secs = Some(mon_cfg.ssh.restart_cooldown_secs);
+            host.restart_cooldown_secs = shared_ssh_defaults
+                .restart_cooldown_secs
+                .or(Some(mon_cfg.ssh.restart_cooldown_secs));
         }
     }
 
@@ -577,6 +627,113 @@ fn load_monitor_yaml(path: &Path) -> anyhow::Result<MonitorConfig> {
     }
 }
 
+fn resolve_shared_ssh_defaults(defaults: &SshHostDefaults) -> SshHostDefaults {
+    SshHostDefaults {
+        user: env_ssh_value("NOS_MONITOR_SSH_USER").or_else(|| defaults.user.clone()),
+        password: env_ssh_value("NOS_MONITOR_SSH_PASSWORD").or_else(|| defaults.password.clone()),
+        restart_command: normalize_optional_string(defaults.restart_command.clone()),
+        restart_cooldown_secs: defaults.restart_cooldown_secs,
+    }
+}
+
+fn expand_ssh_host_ranges(
+    ranges: &[RemoteHostRangeConfig],
+) -> anyhow::Result<Vec<RemoteHostConfig>> {
+    let mut hosts = Vec::new();
+
+    for range in ranges {
+        hosts.extend(expand_ssh_host_range(range)?);
+    }
+
+    Ok(hosts)
+}
+
+fn expand_ssh_host_range(range: &RemoteHostRangeConfig) -> anyhow::Result<Vec<RemoteHostConfig>> {
+    let start = parse_ipv4_addr(&range.start)?;
+    let end = parse_ipv4_addr(&range.end)?;
+
+    anyhow::ensure!(
+        start <= end,
+        "ssh range start must be <= end: {} > {}",
+        range.start,
+        range.end
+    );
+
+    let prefix = normalize_optional_string(range.name_prefix.clone())
+        .unwrap_or_else(|| default_range_name_prefix(start, end));
+
+    let mut hosts = Vec::new();
+    for current in start..=end {
+        let ip = format_ipv4_addr(current);
+        let suffix = current & 0xff;
+        hosts.push(RemoteHostConfig {
+            name: format!("{}-{}", prefix, suffix),
+            host: ip,
+            port: range.port,
+            user: range.user.clone(),
+            password: range.password.clone(),
+            log_paths: Vec::new(),
+            screen_names: Vec::new(),
+            process_keywords: Vec::new(),
+            restart_command: range.restart_command.clone(),
+            restart_cooldown_secs: range.restart_cooldown_secs,
+            node_addr: range.node_addr.clone(),
+            client_id: None,
+        });
+    }
+
+    Ok(hosts)
+}
+
+fn parse_ipv4_addr(value: &str) -> anyhow::Result<u32> {
+    let addr: std::net::Ipv4Addr = value
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid IPv4 address in ssh range: {value}"))?;
+    Ok(u32::from(addr))
+}
+
+fn format_ipv4_addr(value: u32) -> String {
+    std::net::Ipv4Addr::from(value).to_string()
+}
+
+fn default_range_name_prefix(start: u32, end: u32) -> String {
+    let start_octets = std::net::Ipv4Addr::from(start).octets();
+    let end_octets = std::net::Ipv4Addr::from(end).octets();
+
+    if start_octets[..3] == end_octets[..3] {
+        format!(
+            "{}-{}-{}",
+            start_octets[0], start_octets[1], start_octets[2]
+        )
+    } else {
+        format!(
+            "{}-{}-{}-{}",
+            start_octets[0], start_octets[1], start_octets[2], start_octets[3]
+        )
+    }
+}
+
+fn env_ssh_value(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| normalize_optional_string(Some(value)))
+}
+
+fn first_non_empty(primary: Option<String>, fallback: Option<String>) -> Option<String> {
+    normalize_optional_string(primary).or_else(|| normalize_optional_string(fallback))
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,11 +745,20 @@ mod tests {
         previous: Option<String>,
     }
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     impl EnvVarGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var(key).ok();
             // SAFETY: Tests are short-lived and this helper restores the original value on drop.
             unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: Tests are short-lived and this helper restores the original env state on drop.
+            unsafe { std::env::remove_var(key) };
             Self { key, previous }
         }
     }
@@ -644,8 +810,10 @@ mod tests {
         assert_eq!(cfg.log_level.as_deref(), Some("debug"));
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn load_configs_applies_base_env_and_ssh_defaults() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         let base_path = dir.path().join("config.yaml");
         let monitor_path = dir.path().join("monitor.yaml");
@@ -684,6 +852,195 @@ mod tests {
         assert_eq!(host.log_paths, fixed_remote_log_paths());
         assert_eq!(host.screen_names, fixed_screen_names());
         assert_eq!(host.process_keywords, fixed_process_keywords());
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn load_configs_applies_ssh_defaults_and_env_overrides() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let monitor_path = dir.path().join("monitor.yaml");
+
+        fs::write(
+            &monitor_path,
+            "monitor:\n  ssh:\n    defaults:\n      user: shared-user\n      password: shared-pass\n      restart_command: \"cd ~ && ./restart-nos.sh\"\n      restart_cooldown_secs: 123\n    hosts:\n      - name: worker-a\n        host: 192.168.1.10\n      - name: worker-b\n        host: 192.168.1.11\n        user: explicit-user\n        password: explicit-pass\n        restart_command: \"systemctl restart nos\"\n        restart_cooldown_secs: 456\n",
+        )
+        .unwrap();
+
+        let env_user = EnvVarGuard::set("NOS_MONITOR_SSH_USER", "env-user");
+        let env_password = EnvVarGuard::set("NOS_MONITOR_SSH_PASSWORD", "env-pass");
+
+        let (cfg, _) = load_configs(Some(monitor_path), None).await.unwrap();
+
+        drop(env_user);
+        drop(env_password);
+
+        assert_eq!(cfg.ssh.hosts.len(), 2);
+        assert_eq!(cfg.ssh.hosts[0].user.as_deref(), Some("env-user"));
+        assert_eq!(cfg.ssh.hosts[0].password.as_deref(), Some("env-pass"));
+        assert_eq!(
+            cfg.ssh.hosts[0].restart_command.as_deref(),
+            Some("cd ~ && ./restart-nos.sh")
+        );
+        assert_eq!(cfg.ssh.hosts[0].restart_cooldown_secs, Some(123));
+        assert_eq!(cfg.ssh.hosts[1].user.as_deref(), Some("explicit-user"));
+        assert_eq!(cfg.ssh.hosts[1].password.as_deref(), Some("explicit-pass"));
+        assert_eq!(
+            cfg.ssh.hosts[1].restart_command.as_deref(),
+            Some("systemctl restart nos")
+        );
+        assert_eq!(cfg.ssh.hosts[1].restart_cooldown_secs, Some(456));
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn load_configs_treats_blank_ssh_credentials_as_missing() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let monitor_path = dir.path().join("monitor.yaml");
+
+        fs::write(
+            &monitor_path,
+            "monitor:\n  ssh:\n    defaults:\n      user: \"   \"\n      password: \"\"\n    hosts:\n      - name: worker-a\n        host: 192.168.1.10\n        user: \" \"\n        password: \"   \"\n",
+        )
+        .unwrap();
+
+        let env_user = EnvVarGuard::remove("NOS_MONITOR_SSH_USER");
+        let env_password = EnvVarGuard::remove("NOS_MONITOR_SSH_PASSWORD");
+
+        let (cfg, _) = load_configs(Some(monitor_path), None).await.unwrap();
+
+        drop(env_user);
+        drop(env_password);
+
+        assert_eq!(cfg.ssh.hosts[0].user, None);
+        assert_eq!(cfg.ssh.hosts[0].password, None);
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn load_configs_applies_shared_restart_defaults() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let monitor_path = dir.path().join("monitor.yaml");
+
+        fs::write(
+            &monitor_path,
+            "monitor:\n  ssh:\n    restart_cooldown_secs: 300\n    defaults:\n      restart_command: \"screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli\"\n      restart_cooldown_secs: 222\n    hosts:\n      - name: worker-a\n        host: 192.168.1.10\n      - name: worker-b\n        host: 192.168.1.11\n        restart_command: \"systemctl restart nos\"\n      - name: worker-c\n        host: 192.168.1.12\n        restart_cooldown_secs: 444\n",
+        )
+        .unwrap();
+
+        let (cfg, _) = load_configs(Some(monitor_path), None).await.unwrap();
+
+        assert_eq!(
+            cfg.ssh.hosts[0].restart_command.as_deref(),
+            Some("screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli")
+        );
+        assert_eq!(cfg.ssh.hosts[0].restart_cooldown_secs, Some(222));
+        assert_eq!(
+            cfg.ssh.hosts[1].restart_command.as_deref(),
+            Some("systemctl restart nos")
+        );
+        assert_eq!(cfg.ssh.hosts[1].restart_cooldown_secs, Some(222));
+        assert_eq!(
+            cfg.ssh.hosts[2].restart_command.as_deref(),
+            Some("screen -S nos -X quit; cd ~ && screen -dmS nos ./nospowcli")
+        );
+        assert_eq!(cfg.ssh.hosts[2].restart_cooldown_secs, Some(444));
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn load_configs_expands_ssh_ranges_with_defaults_and_overrides() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let monitor_path = dir.path().join("monitor.yaml");
+
+        fs::write(
+            &monitor_path,
+            "monitor:\n  node:\n    server_addr: 10.0.0.1:1234\n  ssh:\n    restart_cooldown_secs: 300\n    defaults:\n      user: shared-user\n      password: shared-pass\n      restart_command: \"shared-restart\"\n      restart_cooldown_secs: 222\n    ranges:\n      - name_prefix: rack-a\n        start: 192.168.10.20\n        end: 192.168.10.22\n      - start: 192.168.20.5\n        end: 192.168.20.6\n        user: range-user\n        restart_command: \"range-restart\"\n        restart_cooldown_secs: 444\n    hosts:\n      - name: worker-a\n        host: 192.168.30.10\n",
+        )
+        .unwrap();
+
+        let (cfg, _) = load_configs(Some(monitor_path), None).await.unwrap();
+
+        assert_eq!(cfg.ssh.hosts.len(), 6);
+
+        assert_eq!(cfg.ssh.hosts[0].name, "worker-a");
+
+        assert_eq!(cfg.ssh.hosts[1].name, "rack-a-20");
+        assert_eq!(cfg.ssh.hosts[1].host, "192.168.10.20");
+        assert_eq!(cfg.ssh.hosts[1].user.as_deref(), Some("shared-user"));
+        assert_eq!(cfg.ssh.hosts[1].password.as_deref(), Some("shared-pass"));
+        assert_eq!(
+            cfg.ssh.hosts[1].restart_command.as_deref(),
+            Some("shared-restart")
+        );
+        assert_eq!(cfg.ssh.hosts[1].restart_cooldown_secs, Some(222));
+        assert_eq!(cfg.ssh.hosts[1].node_addr.as_deref(), Some("10.0.0.1:1234"));
+
+        assert_eq!(cfg.ssh.hosts[4].name, "192-168-20-5");
+        assert_eq!(cfg.ssh.hosts[4].user.as_deref(), Some("range-user"));
+        assert_eq!(cfg.ssh.hosts[4].password.as_deref(), Some("shared-pass"));
+        assert_eq!(
+            cfg.ssh.hosts[4].restart_command.as_deref(),
+            Some("range-restart")
+        );
+        assert_eq!(cfg.ssh.hosts[4].restart_cooldown_secs, Some(444));
+    }
+
+    #[test]
+    fn expand_ssh_host_range_rejects_descending_ranges() {
+        let range = RemoteHostRangeConfig {
+            start: "192.168.1.10".to_string(),
+            end: "192.168.1.9".to_string(),
+            ..Default::default()
+        };
+
+        let err = expand_ssh_host_range(&range).unwrap_err();
+        assert!(err.to_string().contains("start must be <= end"));
+    }
+
+    #[test]
+    fn expand_ssh_host_range_supports_single_host_ranges() {
+        let range = RemoteHostRangeConfig {
+            start: "192.168.5.9".to_string(),
+            end: "192.168.5.9".to_string(),
+            ..Default::default()
+        };
+
+        let hosts = expand_ssh_host_range(&range).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "192-168-5-9");
+        assert_eq!(hosts[0].host, "192.168.5.9");
+    }
+
+    #[test]
+    fn expand_ssh_host_range_uses_stable_names_across_subnets() {
+        let range = RemoteHostRangeConfig {
+            start: "192.168.5.254".to_string(),
+            end: "192.168.6.1".to_string(),
+            ..Default::default()
+        };
+
+        let hosts = expand_ssh_host_range(&range).unwrap();
+        assert_eq!(hosts.len(), 4);
+        assert_eq!(hosts[0].name, "192-168-5-254-254");
+        assert_eq!(hosts[1].name, "192-168-5-254-255");
+        assert_eq!(hosts[2].name, "192-168-5-254-0");
+        assert_eq!(hosts[3].name, "192-168-5-254-1");
+    }
+
+    #[test]
+    fn expand_ssh_host_range_rejects_invalid_ipv4_addresses() {
+        let range = RemoteHostRangeConfig {
+            start: "192.168.1.999".to_string(),
+            end: "192.168.2.1".to_string(),
+            ..Default::default()
+        };
+
+        let err = expand_ssh_host_range(&range).unwrap_err();
+        assert!(err.to_string().contains("invalid IPv4 address"));
     }
 
     #[test]
