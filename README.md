@@ -80,10 +80,21 @@ sudo install -m 0755 target/release/nos-monitor /opt/nos-monitor/nos-monitor
 ```bash
 sudo install -d /etc/nos-monitor
 sudo cp monitor.yaml /etc/nos-monitor/monitor.yaml
+```
+
+如果你还需要单独的基础配置文件，也可以额外放一个：
+
+```bash
 sudo cp config.yaml /etc/nos-monitor/config.yaml
 ```
 
-如果你没有单独的基础配置文件，也可以把启动命令里的 `-f /etc/nos-monitor/config.yaml` 去掉。
+OpenRC 默认脚本只带：
+
+```sh
+command_args="-c /etc/nos-monitor/monitor.yaml"
+```
+
+也就是 `config.yaml` 默认按 **可选项** 处理。
 
 ### 3. 安装 OpenRC 服务脚本
 
@@ -96,20 +107,20 @@ sudo install -D -m 0755 deploy/openrc/nos-monitor /etc/init.d/nos-monitor
 - 二进制：`/opt/nos-monitor/nos-monitor`
 - 工作目录：`/opt/nos-monitor`
 - 监控配置：`/etc/nos-monitor/monitor.yaml`
-- 基础配置：`/etc/nos-monitor/config.yaml`
+- 基础配置：默认不显式传入，按程序当前行为可选读取 `$PWD/config.yaml`
 - 运行用户：`root`
 - 日志目录：`/opt/nos-monitor/log`
 
-如果你不想用 `config.yaml`，就把脚本里的：
+如果你需要强制指定基础配置文件，就把脚本里的：
 
 ```sh
-command_args="-c /etc/nos-monitor/monitor.yaml -f /etc/nos-monitor/config.yaml"
+command_args="-c /etc/nos-monitor/monitor.yaml"
 ```
 
 改成：
 
 ```sh
-command_args="-c /etc/nos-monitor/monitor.yaml"
+command_args="-c /etc/nos-monitor/monitor.yaml -f /etc/nos-monitor/config.yaml"
 ```
 
 ### 4. 加入开机启动并启动
@@ -141,6 +152,7 @@ tail -f /opt/nos-monitor/log/nos.log
 
 - 当前程序没有原生热加载；改完 YAML 后通常需要 `rc-service nos-monitor restart`
 - `directory="/opt/nos-monitor"` 会影响程序默认的 `log/nos.log` 输出位置
+- OpenRC 默认只传 `monitor.yaml`；如果你要显式使用 `/etc/nos-monitor/config.yaml`，请手动把 `-f` 加回 `command_args`
 - OpenRC 脚本里用了 `checkpath`，启动前会自动确保 `/opt/nos-monitor/log` 存在
 - 若后续改成非 root 用户运行，要同步调整 `/opt/nos-monitor` 和 `/etc/nos-monitor` 权限
 

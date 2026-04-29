@@ -3,7 +3,7 @@
 name="nos-monitor"
 description="nos-monitor service"
 command="/opt/nos-monitor/nos-monitor"
-command_args="-c /etc/nos-monitor/monitor.yaml -f /etc/nos-monitor/config.yaml"
+command_args="-c /etc/nos-monitor/monitor.yaml"
 command_user="root:root"
 directory="/opt/nos-monitor"
 pidfile="/run/${RC_SVCNAME}.pid"
