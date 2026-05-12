@@ -618,6 +618,17 @@ fn detect_log(
 
     let level_lc = level.to_ascii_lowercase();
     if level_lc == "fatal" || level_lc == "error" {
+        // Skip if log is over 5 minutes old — prevents startup flood from old data
+        if let Some(ref ts) = log_ts {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                let age = Utc::now().signed_duration_since(dt.with_timezone(&Utc));
+                if age.num_seconds() > 300 {
+                    return None;
+                }
+            }
+        } else {
+            return None; // No timestamp = too uncertain to alert
+        }
         let matched_ref = find_match(&combined, &cfg.detect.secondary_keywords)?;
         return Some(AlertEvent {
             event_type: "mining_error".to_string(),
