@@ -657,6 +657,17 @@ fn split_line_parts(parsed: &ParsedLine) -> (String, Option<String>, String) {
             if let Some(s) = &j.stacktrace {
                 parts.push(s.clone());
             }
+            // Include mining-candidate fields that live at the JSON top level
+            // (e.g. miner-client.go logs: workerID, height, nonce).
+            if let Some(w) = j.workerID {
+                parts.push(format!("workerID={w}"));
+            }
+            if let Some(h) = j.height {
+                parts.push(format!("height={h}"));
+            }
+            if let Some(n) = &j.nonce {
+                parts.push(format!("nonce={n}"));
+            }
             (lvl, ts, parts.join(" | "))
         }
         ParsedLine::Text(t) => (String::new(), None, t.clone()),

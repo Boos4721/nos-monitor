@@ -7,6 +7,14 @@ pub struct JsonLogLine {
     pub msg: Option<String>,
     pub error: Option<String>,
     pub stacktrace: Option<String>,
+
+    // Mining client fields — miner-client.go writes these as top-level JSON keys.
+    #[serde(default)]
+    pub workerID: Option<u64>,
+    #[serde(default)]
+    pub height: Option<u64>,
+    #[serde(default)]
+    pub nonce: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
