@@ -456,11 +456,20 @@ async fn fetch_remote_snapshot(
     script.push_str(&format!("echo '{}_PROCESSES'\n", marker));
     script.push_str("ps -ef 2>/dev/null || true\n");
     for path in &host_cfg.log_paths {
-        let escaped = shell_escape(path.to_string_lossy().as_ref());
-        script.push_str(&format!("echo '{}_LOG:{}'\n", marker, path.display()));
+        let fname = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "miner-client.log".to_string());
         script.push_str(&format!(
-            "tail -n {} {} 2>/dev/null || true\n",
-            tail_lines, escaped
+            r#"p="{}"
+f=$(find /home /root -name "{}" -type f 2>/dev/null | head -1)
+if [ -n "$f" ]; then
+    echo "{marker}_LOG:$f"
+    tail -n {tail_lines} "$f" 2>/dev/null || true
+fi
+"#,
+            path.display(),
+            fname
         ));
     }
 
