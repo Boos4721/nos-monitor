@@ -114,7 +114,6 @@ fn default_rpc_endpoints() -> Vec<String> {
         "https://www.kortho-chain.com".to_string(),
         "https://www.kortho-chain.cc".to_string(),
         "https://www.kortho-chain.pro".to_string(),
-        "https://rpc.noschain.org".to_string(),
     ]
 }
 
@@ -445,7 +444,7 @@ fn default_ssh_timeout_secs() -> u64 {
 }
 
 fn default_ssh_tail_lines() -> usize {
-    20
+    100
 }
 
 fn default_restart_cooldown_secs() -> u64 {

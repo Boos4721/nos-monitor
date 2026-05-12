@@ -114,14 +114,13 @@ fn feishu_payload(ev: &AlertEvent) -> FeishuCard {
     if let Some(matched) = &ev.matched {
         lines.push(format!("**命中:** {matched}"));
     }
-    // For verified candidates, show on-chain details from the summary
-    if ev.event_type == "candidate_verified" {
-        if let Some(tx_hash) = &ev.matched {
-            lines.push(format!("**区块哈希:** `{}`", tx_hash));
-        }
-    }
-    if ev.event_type == "candidate_unverified" && !ev.raw.is_empty() {
-        lines.push(format!("**原因:** {}", ev.raw));
+    // Block explorer link for all candidate events
+    const EXPLORER_URL: &str = "https://www.kortho.io/#/Ts/Kto0E3bf44b9E3457347bc84Eafa006772E577F5bDe3_7/1";
+    if ev.event_type == "candidate_detected" || ev.event_type == "candidate_verified" {
+        lines.push(format!(
+            "**区块浏览器:** [查看交易记录]({})",
+            EXPLORER_URL
+        ));
     }
 
     FeishuCard {
