@@ -500,6 +500,7 @@ pub struct RemoteHostConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RemoteHostRangeConfig {
     pub name_prefix: Option<String>,
+    pub names: Option<String>,
     pub ips: Option<String>,
     #[serde(default)]
     pub start: String,
@@ -663,12 +664,27 @@ fn expand_ssh_host_range(range: &RemoteHostRangeConfig) -> anyhow::Result<Vec<Re
     let prefix = normalize_optional_string(range.name_prefix.clone())
         .unwrap_or_else(|| default_range_name_prefix(start, end));
 
+    // Parse optional comma-separated names list
+    let custom_names: Option<Vec<String>> = range.names.as_ref().map(|n| {
+        n.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+
     let mut hosts = Vec::new();
-    for current in start..=end {
+    for (idx, current) in (start..=end).enumerate() {
         let ip = format_ipv4_addr(current);
         let suffix = current & 0xff;
+
+        // Use custom name if provided at this index, otherwise auto-generate
+        let name = custom_names
+            .as_ref()
+            .and_then(|names| names.get(idx).cloned())
+            .unwrap_or_else(|| format!("{}-{}", prefix, suffix));
+
         hosts.push(RemoteHostConfig {
-            name: format!("{}-{}", prefix, suffix),
+            name,
             host: ip,
             port: range.port,
             user: range.user.clone(),
@@ -1092,6 +1108,41 @@ mod tests {
 
         let err = expand_ssh_host_range(&range).unwrap_err();
         assert!(err.to_string().contains("invalid IPv4 address"));
+    }
+
+    #[test]
+    fn expand_ssh_host_range_with_custom_names() {
+        let range = RemoteHostRangeConfig {
+            ips: Some("10.0.0.1-5".to_string()),
+            names: Some("node-a,node-b,node-c".to_string()),
+            ..Default::default()
+        };
+
+        let hosts = expand_ssh_host_range(&range).unwrap();
+        assert_eq!(hosts.len(), 5);
+        assert_eq!(hosts[0].name, "node-a");
+        assert_eq!(hosts[0].host, "10.0.0.1");
+        assert_eq!(hosts[1].name, "node-b");
+        assert_eq!(hosts[1].host, "10.0.0.2");
+        assert_eq!(hosts[2].name, "node-c");
+        assert_eq!(hosts[2].host, "10.0.0.3");
+        // Remaining IPs use auto-generated names
+        assert_eq!(hosts[3].name, "10-0-0-4");
+        assert_eq!(hosts[4].name, "10-0-0-5");
+    }
+
+    #[test]
+    fn expand_ssh_host_range_with_single_name() {
+        let range = RemoteHostRangeConfig {
+            ips: Some("192.168.100.10-10".to_string()),
+            names: Some("worker-1".to_string()),
+            ..Default::default()
+        };
+
+        let hosts = expand_ssh_host_range(&range).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "worker-1");
+        assert_eq!(hosts[0].host, "192.168.100.10");
     }
 
     #[test]
