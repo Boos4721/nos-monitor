@@ -180,12 +180,12 @@ async fn main() -> anyhow::Result<()> {
                 let live_cfg = cfg.liveness.clone();
                 let source = Some(format!("ssh:{}", host_cfg.name));
                 let client_id = host_cfg.client_id.clone();
-                let host_name = host_cfg.name.clone();
+                let host_name_live = host_cfg.name.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
                         liveness::run_liveness_loop(addr, client_id, source, live_cfg, tx).await
                     {
-                        error!(error = ?e, host = %host_name, "remote node liveness loop exited");
+                        error!(error = ?e, host = %host_name_live, "remote node liveness loop exited");
                     }
                 });
             }
