@@ -992,9 +992,20 @@ mod tests {
 
     #[test]
     fn parses_json_with_escaped_quotes() {
-        let raw = r#"{"msg":"找到有效Nonce\",\"workerID\":8, \"height\":600000,\"nonce\":123456789012345"}"#;
+        let raw = r#"{"msg":"找到有效Nonce\\",\\"workerID\\":8, \\\"height\\\":600000,\\\"nonce\\\":123456789012345"}"#;
         let parsed = parse_mining_candidate(raw).expect("candidate should parse");
         assert_eq!(parsed.worker_id, 8);
         assert_eq!(parsed.height, 600000);
+    }
+
+    #[test]
+    fn parses_rfc3339_without_colon_timezone() {
+        // +0800 (no colon) is not strict RFC 3339 but should still parse
+        use chrono::DateTime;
+        let ts = "2026-04-05T17:57:30.525+0800";
+        let dt = DateTime::parse_from_rfc3339(ts)
+            .or_else(|_| DateTime::parse_from_str(ts, "%+"))
+            .expect("should parse +0800 format");
+        assert_eq!(dt.format("%z").to_string(), "+0800");
     }
 }
