@@ -155,6 +155,7 @@ pub struct AlertEvent {
     pub summary: String,
     pub matched: Option<String>,
     pub raw: String,
+    pub block_height: Option<u64>,
 
     #[serde(skip_serializing)]
     pub fingerprint_key: String,
@@ -204,6 +205,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
                 ),
                 cfg.alert.max_raw_bytes,
             ),
+            block_height: Some(result.matched_block),
             fingerprint_key: format!(
                 "candidate_verified|{}|{}|{}",
                 result.candidate.height, result.candidate.worker_id, result.candidate.nonce
@@ -227,6 +229,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
                 format!("combined={} | raw={}", result.candidate.combined, result.candidate.raw),
                 cfg.alert.max_raw_bytes,
             ),
+            block_height: None,
             fingerprint_key: format!(
                 "candidate_unverified|{}|{}|{}",
                 result.candidate.height, result.candidate.worker_id, result.candidate.nonce
@@ -252,6 +255,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             },
             matched: None,
             raw: truncate(error, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!("node_down|{addr}"),
         }),
         InputEvent::NodeUp {
@@ -274,6 +278,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             },
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("node_up|{addr}"),
         }),
         InputEvent::RpcUnavailable {
@@ -292,6 +297,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("RPC 不可用: {}", endpoints.join(", ")),
             matched: None,
             raw: truncate(error, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!("rpc_unavailable|{}", endpoints.join("|")),
         }),
         InputEvent::RpcRecovered {
@@ -311,6 +317,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("RPC 恢复: {endpoint}, latest={height}, latency={latency_ms}ms"),
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("rpc_recovered|{endpoint}"),
         }),
         InputEvent::ChainStalled {
@@ -333,6 +340,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             ),
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("chain_stalled|{endpoint}"),
         }),
         InputEvent::ChainRecovered {
@@ -352,6 +360,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("链恢复: {endpoint}, latest={height}, latency={latency_ms}ms"),
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("chain_recovered|{endpoint}"),
         }),
         InputEvent::RemoteHostDown { host, error } => Some(AlertEvent {
@@ -366,6 +375,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("SSH 远端机器不可达: {host}"),
             matched: None,
             raw: truncate(error, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!("remote_host_down|{host}"),
         }),
         InputEvent::RemoteHostUp { host } => Some(AlertEvent {
@@ -380,6 +390,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("SSH 远端机器恢复: {host}"),
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("remote_host_up|{host}"),
         }),
         InputEvent::ScreenMissing {
@@ -398,6 +409,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("screen 缺失: {host} -> {screen_name}"),
             matched: Some(screen_name.clone()),
             raw: screen_name.clone(),
+            block_height: None,
             fingerprint_key: format!("screen_missing|{host}|{screen_name}"),
         }),
         InputEvent::ScreenRecovered {
@@ -416,6 +428,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("screen 恢复: {host} -> {screen_name}"),
             matched: Some(screen_name.clone()),
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("screen_recovered|{host}|{screen_name}"),
         }),
         InputEvent::ProcessMissing {
@@ -434,6 +447,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("进程缺失: {host} -> {keyword}"),
             matched: Some(keyword.clone()),
             raw: keyword.clone(),
+            block_height: None,
             fingerprint_key: format!("process_missing|{host}|{keyword}"),
         }),
         InputEvent::ProcessRecovered {
@@ -452,6 +466,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("进程恢复: {host} -> {keyword}"),
             matched: Some(keyword.clone()),
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("process_recovered|{host}|{keyword}"),
         }),
         InputEvent::ProcessRestartTriggered {
@@ -471,6 +486,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("进程重启已触发: {host} -> {keyword}"),
             matched: Some(keyword.clone()),
             raw: truncate(command, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!("process_restart_triggered|{host}|{keyword}"),
         }),
         InputEvent::ProcessRestartFailed {
@@ -490,6 +506,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("进程重启失败: {host} -> {keyword}"),
             matched: Some(keyword.clone()),
             raw: truncate(error, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!("process_restart_failed|{host}|{keyword}"),
         }),
         InputEvent::ProcessRestartSkippedCooldown {
@@ -512,6 +529,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             ),
             matched: Some(keyword.clone()),
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("process_restart_skipped_cooldown|{host}|{keyword}"),
         }),
         InputEvent::LogStale {
@@ -534,6 +552,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             ),
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("log_stale|{host}"),
         }),
         InputEvent::LogRecovered {
@@ -552,6 +571,7 @@ pub fn detect_event(cfg: &MonitorConfig, ev: InputEvent) -> Option<AlertEvent> {
             summary: format!("日志时间恢复推进: {host}"),
             matched: None,
             raw: String::new(),
+            block_height: None,
             fingerprint_key: format!("log_recovered|{host}"),
         }),
     }
@@ -592,6 +612,7 @@ fn detect_log(
                 candidate.height, candidate.worker_id, candidate.nonce
             )),
             raw: truncate(raw, cfg.alert.max_raw_bytes),
+            block_height: Some(candidate.height),
             fingerprint_key: format!(
                 "candidate_detected|{}|{}|{}",
                 candidate.height, candidate.worker_id, candidate.nonce
@@ -612,6 +633,7 @@ fn detect_log(
             summary: format!("命中出块/提交失败日志关键字: {matched}"),
             matched: Some(matched.clone()),
             raw: truncate(raw, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!("block_fail|{}|{matched}", path.to_string_lossy()),
         });
     }
@@ -642,6 +664,7 @@ fn detect_log(
             summary: "命中挖矿相关 error/fatal 日志".to_string(),
             matched: Some(matched_ref.clone()),
             raw: truncate(raw, cfg.alert.max_raw_bytes),
+            block_height: None,
             fingerprint_key: format!(
                 "mining_related_error|{}|{}",
                 path.to_string_lossy(),

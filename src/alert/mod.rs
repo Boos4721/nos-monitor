@@ -114,13 +114,13 @@ fn feishu_payload(ev: &AlertEvent) -> FeishuCard {
     if let Some(matched) = &ev.matched {
         lines.push(format!("**命中:** {matched}"));
     }
-    // Block explorer link for all candidate events
-    const EXPLORER_URL: &str = "https://www.kortho.io/#/Ts/Kto0E3bf44b9E3457347bc84Eafa006772E577F5bDe3_7/1";
+    // Block explorer link for all candidate events — use block height when available
     if ev.event_type == "candidate_detected" || ev.event_type == "candidate_verified" {
-        lines.push(format!(
-            "**区块浏览器:** [查看交易记录]({})",
-            EXPLORER_URL
-        ));
+        if let Some(height) = ev.block_height {
+            lines.push(format!(
+                "**区块浏览器:** [查看交易记录](https://www.kortho.io/#/Block/{height}/1)"
+            ));
+        }
     }
 
     FeishuCard {
@@ -161,6 +161,7 @@ mod tests {
             summary: "node state changed".to_string(),
             matched: Some("matched phrase".to_string()),
             raw: "raw line contents".to_string(),
+            block_height: None,
             fingerprint_key: "fingerprint".to_string(),
         }
     }
@@ -173,11 +174,30 @@ mod tests {
         assert_eq!(payload.card.header.title.content, "【链上确认】NOS 监控");
         assert_eq!(payload.card.header.template, "green");
         let content = &payload.card.elements[0].text.content;
-        assert!(content.contains("**类型:** candidate_verified"));
+        assert!(content.contains("**摘要:** node state changed"));
         assert!(content.contains("**节点:** 127.0.0.1:1234"));
-        assert!(content.contains("**client_id:** client-7"));
+        assert!(content.contains("**来源:** /tmp/miner.log"));
+        assert!(content.contains("**日志时间:** 2026-04-29T05:04:59Z"));
         assert!(content.contains("**命中:** matched phrase"));
-        assert!(content.contains("**原始:** raw line contents"));
+    }
+
+    #[test]
+    fn candidate_verified_with_block_height_shows_explorer_link() {
+        let mut event = sample_event("candidate_verified", "info");
+        event.block_height = Some(70434859);
+        let payload = feishu_payload(&event);
+        let content = &payload.card.elements[0].text.content;
+        assert!(content.contains("**区块浏览器:**"));
+        assert!(content.contains("https://www.kortho.io/#/Block/70434859/1"));
+        assert!(content.contains("查看交易记录"));
+    }
+
+    #[test]
+    fn candidate_without_block_height_omits_explorer_link() {
+        let event = sample_event("candidate_verified", "info");
+        let payload = feishu_payload(&event);
+        let content = &payload.card.elements[0].text.content;
+        assert!(!content.contains("区块浏览器"));
     }
 
     #[test]
@@ -202,11 +222,9 @@ mod tests {
         let content = &payload.card.elements[0].text.content;
 
         assert!(!content.contains("**节点:**"));
-        assert!(!content.contains("**client_id:**"));
         assert!(!content.contains("**来源:**"));
         assert!(!content.contains("**日志时间:**"));
         assert!(!content.contains("**命中:**"));
-        assert!(!content.contains("**原始:**"));
         assert!(content.contains("**摘要:** node state changed"));
     }
 }
