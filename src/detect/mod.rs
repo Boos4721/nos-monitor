@@ -642,7 +642,9 @@ fn detect_log(
     if level_lc == "fatal" || level_lc == "error" {
         // Skip if log is over 5 minutes old — prevents startup flood from old data
         if let Some(ref ts) = log_ts {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+            let parsed = chrono::DateTime::parse_from_rfc3339(ts)
+                .or_else(|_| chrono::DateTime::parse_from_str(ts, "%+"));
+            if let Ok(dt) = parsed {
                 let age = Utc::now().signed_duration_since(dt.with_timezone(&Utc));
                 if age.num_seconds() > 300 {
                     return None;
