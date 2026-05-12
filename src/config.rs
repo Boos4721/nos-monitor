@@ -529,7 +529,7 @@ fn default_ssh_port() -> u16 {
 }
 
 fn fixed_remote_log_paths() -> Vec<PathBuf> {
-    vec![PathBuf::from("~/logs/miner-client.log")]
+    vec![PathBuf::from("/home/boos/logs/miner-client.log")]
 }
 
 fn fixed_screen_names() -> Vec<String> {

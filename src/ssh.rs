@@ -70,6 +70,7 @@ pub async fn run_ssh_loop(
                 }
             }
             Err(err) => {
+                eprintln!("ssh poll failed: host={}, error={}", host_cfg.name, err);
                 if !state.host_alerting {
                     if !try_send(
                         &tx,
@@ -435,7 +436,6 @@ async fn emit_log_events(
             }
         }
     }
-
     true
 }
 
@@ -462,17 +462,10 @@ async fn fetch_remote_snapshot(
             "tail -n {} {} 2>/dev/null || true\n",
             tail_lines, escaped
         ));
-        // Grep for Nonce/爆块 candidate lines — catches ALL historic entries,
-        // not just the last N lines. Dedup in emit_log_events prevents re-processing.
-        script.push_str(&format!("echo '{}_NONCE:{}'\n", marker, path.display()));
-        script.push_str(&format!(
-            "grep -ai 'nonce' {} 2>/dev/null | tail -n 100 || true\n",
-            escaped
-        ));
     }
 
     let mut cmd = build_ssh_command(host_cfg, timeout_secs);
-    cmd.arg("sh").arg("-lc").arg(script);
+    cmd.arg("sh").arg("-c").arg(script);
 
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs + 2),
@@ -497,7 +490,6 @@ fn parse_remote_snapshot(
     let screens_marker = format!("{marker}_SCREENS");
     let processes_marker = format!("{marker}_PROCESSES");
     let log_prefix = format!("{marker}_LOG:");
-    let nonce_prefix = format!("{marker}_NONCE:");
 
     let mut section = "";
     let mut current_log: Option<PathBuf> = None;
@@ -517,11 +509,6 @@ fn parse_remote_snapshot(
             continue;
         }
         if let Some(rest) = line.strip_prefix(&log_prefix) {
-            section = "log";
-            current_log = Some(PathBuf::from(rest));
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix(&nonce_prefix) {
             section = "log";
             current_log = Some(PathBuf::from(rest));
             continue;
@@ -598,7 +585,7 @@ async fn run_remote_command(
     command: &str,
 ) -> anyhow::Result<()> {
     let mut cmd = build_ssh_command(host_cfg, timeout_secs);
-    cmd.arg("sh").arg("-lc").arg(command);
+    cmd.arg("sh").arg("-c").arg(command);
 
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs + 2),
