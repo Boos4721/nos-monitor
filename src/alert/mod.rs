@@ -96,17 +96,17 @@ fn feishu_payload(ev: &AlertEvent) -> FeishuCard {
     };
 
     let mut lines = Vec::new();
-    lines.push(format!("**类型:** {}", ev.event_type));
-    lines.push(format!("**规则:** {}", ev.rule_id));
     lines.push(format!("**摘要:** {}", ev.summary));
     if let Some(node_addr) = &ev.node_addr {
         lines.push(format!("**节点:** {node_addr}"));
     }
-    if let Some(client_id) = &ev.client_id {
-        lines.push(format!("**client_id:** {client_id}"));
-    }
     if let Some(source_path) = &ev.source_path {
-        lines.push(format!("**来源:** {source_path}"));
+        // Extract just the host name from "host:/path/to/log"
+        let display = source_path
+            .split(':')
+            .next()
+            .unwrap_or(source_path);
+        lines.push(format!("**来源:** {display}"));
     }
     if let Some(log_ts) = &ev.log_timestamp {
         lines.push(format!("**日志时间:** {log_ts}"));
@@ -114,8 +114,14 @@ fn feishu_payload(ev: &AlertEvent) -> FeishuCard {
     if let Some(matched) = &ev.matched {
         lines.push(format!("**命中:** {matched}"));
     }
-    if !ev.raw.is_empty() {
-        lines.push(format!("**原始:** {}", ev.raw));
+    // For verified candidates, show on-chain details from the summary
+    if ev.event_type == "candidate_verified" {
+        if let Some(tx_hash) = &ev.matched {
+            lines.push(format!("**区块哈希:** `{}`", tx_hash));
+        }
+    }
+    if ev.event_type == "candidate_unverified" && !ev.raw.is_empty() {
+        lines.push(format!("**原因:** {}", ev.raw));
     }
 
     FeishuCard {
